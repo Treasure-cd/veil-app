@@ -18,6 +18,7 @@ dependencies = [
     "pynacl>=1.6.2",
     "python-dotenv>=1.2.2",
     "python-multipart>=0.0.30",
+    "solana>=0.41.0",
     "sqlalchemy>=2.0.50",
     "sqlmodel>=0.0.38",
 ]

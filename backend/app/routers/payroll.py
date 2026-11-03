@@ -4,18 +4,23 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from uuid import UUID, uuid4
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional, List
 from core.session import get_session
 from app.routers.dependencies import get_current_user
 from app.models.user import User
 from app.models.payroll import PayrollGroup, PayrollLink
+from solana.rpc.async_api import AsyncClient
+from solders.signature import Signature
 
 router = APIRouter(
     prefix="/payroll",
     tags=["payroll"],
 )
 
+SOLANA_RPC_URL = "https://api.devnet.solana.com"
+
+# --- Models ---
 class AddRecipientRequest(BaseModel):
     name: str
     walletAddress: str
@@ -43,6 +48,17 @@ class SubmitDetailsRequest(BaseModel):
     walletAddress: str
     memo: Optional[str] = None
 
+# --- Helpers ---
+async def verify_solana_transaction(signature_str: str) -> bool:
+    try:
+        sig = Signature.from_string(signature_str)
+        async with AsyncClient(SOLANA_RPC_URL) as client:
+            response = await client.get_signature_statuses([sig])
+            if not response.value or not response.value[0]: return False
+            return response.value[0].err is None
+    except Exception:
+        return False
+
 def format_recipient(r: dict) -> dict:
     return {
         "id": r.get("id"),
@@ -60,7 +76,7 @@ def format_group(group: PayrollGroup) -> dict:
         recipients = json.loads(group.recipients_json)
     except Exception:
         recipients = []
-    
+
     total_amount = 0
     for r in recipients:
         if r.get("amountAtomic"):
@@ -90,13 +106,14 @@ def format_group(group: PayrollGroup) -> dict:
         "failureReason": group.failure_reason
     }
 
+# --- Routes ---
 @router.post("/groups")
 async def create_group(
     req: CreatePayrollGroupRequest,
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
-    now_str = datetime.utcnow().isoformat() + "Z"
+    now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     recipients_list = []
     if req.recipients:
         for r in req.recipients:
@@ -127,8 +144,8 @@ async def create_group(
         registration_link_open=req.registrationLinkOpen,
         recipients_json=json.dumps(recipients_list),
         status="open" if req.registrationLinkOpen else "draft",
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
     db.add(group)
     await db.commit()
@@ -148,6 +165,7 @@ async def list_groups(
 @router.get("/groups/{group_id}")
 async def get_group(
     group_id: str,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
     try:
@@ -155,27 +173,24 @@ async def get_group(
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid group ID")
 
-    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     group = res.scalars().first()
 
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
-    
+
     return format_group(group)
 
 @router.post("/groups/{group_id}/recipients")
 async def add_recipient(
     group_id: str,
     req: AddRecipientRequest,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(group_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid group ID")
-
-    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id)
+    uuid_id = UUID(group_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     group = res.scalars().first()
 
@@ -187,7 +202,7 @@ async def add_recipient(
     except Exception:
         recipients = []
 
-    now_str = datetime.utcnow().isoformat() + "Z"
+    now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     new_rec = {
         "id": str(uuid4()),
         "name": req.name,
@@ -200,7 +215,7 @@ async def add_recipient(
     }
     recipients.append(new_rec)
     group.recipients_json = json.dumps(recipients)
-    group.updated_at = datetime.utcnow()
+    group.updated_at = datetime.now(timezone.utc)
 
     db.add(group)
     await db.commit()
@@ -210,20 +225,24 @@ async def add_recipient(
 @router.post("/groups/{group_id}/registration-links")
 async def create_registration_link(
     group_id: str,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(group_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid group ID")
+    uuid_id = UUID(group_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
+    res = await db.execute(stmt)
+    group = res.scalars().first()
+
+    if not group:
+         raise HTTPException(status_code=404, detail="group_not_found")
 
     token = str(uuid4())
     link = PayrollLink(
         token=token,
         payroll_id=uuid_id,
         open=True,
-        created_at=datetime.utcnow(),
-        updated_at=datetime.utcnow()
+        created_at=datetime.now(timezone.utc),
+        updated_at=datetime.now(timezone.utc)
     )
     db.add(link)
     await db.commit()
@@ -238,7 +257,7 @@ async def create_registration_link(
 async def submit_employee_details(
     token: str,
     req: SubmitDetailsRequest,
-    db: AsyncSession = Depends(get_session)
+    db: AsyncSession = Depends(get_session) # NO AUTH - EMPLOYEES DON'T LOG IN
 ):
     stmt = select(PayrollLink).where(PayrollLink.token == token)
     res = await db.execute(stmt)
@@ -247,7 +266,6 @@ async def submit_employee_details(
     if not link or not link.open:
         raise HTTPException(status_code=404, detail="link_not_found_or_closed")
 
-    # Get group
     stmt_g = select(PayrollGroup).where(PayrollGroup.id == link.payroll_id)
     res_g = await db.execute(stmt_g)
     group = res_g.scalars().first()
@@ -255,12 +273,16 @@ async def submit_employee_details(
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
+    # STATE MACHINE CHECK: Can only submit if the group is open and not locked
+    if not group.registration_link_open or group.status not in ["draft", "open"]:
+         raise HTTPException(status_code=400, detail="Registration is closed for this payroll group")
+
     try:
         recipients = json.loads(group.recipients_json)
     except Exception:
         recipients = []
 
-    now_str = datetime.utcnow().isoformat() + "Z"
+    now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     new_rec = {
         "id": str(uuid4()),
         "name": req.name,
@@ -273,7 +295,7 @@ async def submit_employee_details(
     }
     recipients.append(new_rec)
     group.recipients_json = json.dumps(recipients)
-    group.updated_at = datetime.utcnow()
+    group.updated_at = datetime.now(timezone.utc)
 
     db.add(group)
     await db.commit()
@@ -284,23 +306,30 @@ async def submit_employee_details(
 async def lock_vault(
     group_id: str,
     req: LockVaultRequest,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(group_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid group ID")
-
-    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id)
+    uuid_id = UUID(group_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     group = res.scalars().first()
 
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
+    # STATE MACHINE
+    if group.status not in ["draft", "open"]:
+        raise HTTPException(status_code=400, detail="Can only lock a draft or open payroll group")
+
+    # BLOCKCHAIN VERIFICATION
+    is_valid_tx = await verify_solana_transaction(req.vaultSignature)
+    if not is_valid_tx:
+        raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
+
     group.status = "locked"
+    group.registration_link_open = False # Close registrations
     group.vault_signature = req.vaultSignature
-    group.updated_at = datetime.utcnow()
+    group.updated_at = datetime.now(timezone.utc)
 
     db.add(group)
     await db.commit()
@@ -310,22 +339,23 @@ async def lock_vault(
 @router.post("/groups/{group_id}/schedule")
 async def schedule_release(
     group_id: str,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(group_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid group ID")
-
-    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id)
+    uuid_id = UUID(group_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     group = res.scalars().first()
 
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
+    # STATE MACHINE
+    if group.status != "locked":
+        raise HTTPException(status_code=400, detail="Can only schedule a locked payroll group")
+
     group.status = "scheduled"
-    group.updated_at = datetime.utcnow()
+    group.updated_at = datetime.now(timezone.utc)
 
     db.add(group)
     await db.commit()
@@ -336,23 +366,29 @@ async def schedule_release(
 async def release_payroll(
     group_id: str,
     req: ReleasePayrollRequest,
+    current_user: User = Depends(get_current_user), # ADDED AUTH
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(group_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid group ID")
-
-    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id)
+    uuid_id = UUID(group_id)
+    stmt = select(PayrollGroup).where(PayrollGroup.id == uuid_id, PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     group = res.scalars().first()
 
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
+    # STATE MACHINE
+    if group.status not in ["locked", "scheduled"]:
+        raise HTTPException(status_code=400, detail="Can only release a locked or scheduled payroll group")
+
+    # BLOCKCHAIN VERIFICATION
+    is_valid_tx = await verify_solana_transaction(req.releaseSignature)
+    if not is_valid_tx:
+        raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
+
     group.status = "released"
     group.release_signature = req.releaseSignature
-    group.updated_at = datetime.utcnow()
+    group.updated_at = datetime.now(timezone.utc)
 
     db.add(group)
     await db.commit()

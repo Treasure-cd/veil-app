@@ -1,0 +1,1 @@
+Note for later: For a production environment, you will want to expand verify_solana_transaction to pull the full transaction data (using get_transaction) and verify that the recipient_address matches your intent and the transferred token amount matches amount_atomic.

@@ -1,7 +1,10 @@
 from sqlmodel import SQLModel, Field
 from uuid import uuid4, UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+def utc_now():
+    return datetime.now(timezone.utc)
 
 class PaymentIntent(SQLModel, table=True):
     __tablename__ = "payment_intents"
@@ -11,13 +14,12 @@ class PaymentIntent(SQLModel, table=True):
     mint: str = Field(...)
     amount_atomic: str = Field(...)
     recipient_address: str = Field(...)
-    receive_mode: str = Field(default="private") # "private" or "public"
+    receive_mode: str = Field(default="private")
     memo: Optional[str] = Field(default=None)
-    source: Optional[str] = Field(default=None)
-    status: str = Field(default="created") # created, funded, claimed, failed
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    status: str = Field(default="created")
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
     fund_signature: Optional[str] = Field(default=None)
     claim_signature: Optional[str] = Field(default=None)
-    source: Optional[str] = Field(default=None)  # whatsapp | qr | nfc | web
+    source: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
