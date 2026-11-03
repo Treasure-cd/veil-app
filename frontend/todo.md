@@ -1,0 +1,2 @@
+- test authentication. once you can fully authenticate a user, you're done with half of it.
+- the remaining business logic bits would be copy pasted from the old app.

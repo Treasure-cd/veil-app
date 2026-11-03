@@ -1,0 +1,31 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Geist", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, monospace;
+
+  --color-background: #fefbfd;
+  --color-foreground: #21081e;
+  --color-primary: #5c049f;
+  --color-secondary: #2e0042;
+  --color-accent: #4806fe;
+
+  --radius-card: 0.75rem;
+  --radius-panel: 1.25rem;
+  --radius-pill: 9999px;
+
+
+  --shadow-veil-sm: 0 2px 8px -2px rgba(92, 4, 159, 0.08);
+  --shadow-veil-md: 0 4px 16px -4px rgba(92, 4, 159, 0.12);
+  --shadow-veil-lg: 0 8px 32px -8px rgba(92, 4, 159, 0.16);
+  --shadow-veil-glow: 0 0 24px rgba(72, 6, 254, 0.25);
+}
+
+@layer base {
+  :root {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
