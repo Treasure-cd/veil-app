@@ -21,7 +21,7 @@ app = FastAPI(
     title="Veil API",
     description="""Seamless payment and automated payroll solution for SMEs and corporate clients.
     Veil transforms everyday mobile devices into complete payment terminals (Invoicing & Tap-to-Pay)
-    and replaces exposed corporate ledgers with confidential, cross-border-ready payroll — all settled
+    and replaces exgposed corporate ledgers with confidential, cross-border-ready payroll — all settled
     instantly in local fiat.""",
     lifespan=lifespan,
 )

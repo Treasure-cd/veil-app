@@ -3,6 +3,7 @@ import { useAuth } from '../../auth/useAuth'
 import { NETWORK, NETWORK_LABEL } from '../../lib/network'
 import { ConnectWalletButton } from '../../auth/ConnectWalletButton'
 import { Button } from '../../components/ui/Button'
+import { useNavigate } from 'react-router'
 
 function NetworkBadge() {
   const live = NETWORK === 'mainnet-beta'
@@ -19,6 +20,7 @@ function NetworkBadge() {
 
 export function Header() {
   const { user } = useAuth()
+  const navigate = useNavigate()
 
   return (
     <header className="sticky top-0 z-10 flex h-16 items-center gap-2 border-b border-primary/5 bg-background/80 px-4 backdrop-blur-md md:gap-3 md:px-8">
@@ -27,7 +29,12 @@ export function Header() {
 
       <div className="ml-auto flex items-center gap-2 md:gap-3">
         <NetworkBadge />
-        <Button size="sm" aria-label="New request" leftIcon={<Plus size={16} weight="bold" />}>
+        <Button
+          size="sm"
+          aria-label="New request"
+          leftIcon={<Plus size={16} weight="bold" />}
+          onClick={() => navigate('/payments')}
+        >
           <span className="hidden sm:inline">New request</span>
         </Button>
         {/* Wallet stays on the far right as the user profile anchor */}

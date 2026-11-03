@@ -1,7 +1,17 @@
-import { useEffect, useState } from 'react'
-import { ArrowUpRight, Lightning, LockKey, PaperPlaneRight, Wallet, CaretRight, Storefront, Money, ShoppingBag, MapPin } from '@phosphor-icons/react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
+import {
+  Lightning,
+  LockKey,
+  MapPin,
+  Money,
+  PaperPlaneRight,
+  ShoppingBag,
+  Storefront,
+  Wallet,
+} from '@phosphor-icons/react'
+import { useNavigate } from 'react-router'
 import { Button } from '../components/ui/Button'
-import { useAuth } from '../auth/useAuth'
+import { api } from '../services/api'
 
 interface Stats {
   currency: string
@@ -42,64 +52,61 @@ interface DashboardData {
   vault: Vault | null
 }
 
-// --- Helpers ---
-const formatDate = (isoStr: string | null) => {
-  if (!isoStr) return 'N/A'
-  const date = new Date(isoStr)
-  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
+function formatCurrency(value: string) {
+  const amount = Number(value)
+  return Number.isFinite(amount)
+    ? amount.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : '—'
 }
 
-const getRelativeTime = (isoStr: string) => {
-  const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto' })
-  const daysDifference = Math.round((new Date(isoStr).getTime() - new Date().getTime()) / (1000 * 60 * 60 * 24))
-  return rtf.format(daysDifference, 'day')
+function formatDate(value: string | null) {
+  if (!value) return 'No release scheduled'
+  const date = new Date(value)
+  return Number.isNaN(date.getTime())
+    ? 'No release scheduled'
+    : date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
 }
 
-const formatCurrency = (val: string) => {
-  return parseFloat(val).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+function relativeTime(value: string) {
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return 'Recently'
+  const days = Math.round((date.getTime() - Date.now()) / 86_400_000)
+  return new Intl.RelativeTimeFormat('en', { numeric: 'auto' }).format(days, 'day')
 }
 
-// --- Icon Picker based on Activity kind and source ---
-const getActivityIcon = (item: ActivityItem) => {
-  if (item.kind === 'payroll') return <Money weight="fill" className="text-amber-500" size={24} />
-  if (item.source === 'whatsapp') return <Storefront weight="fill" className="text-emerald-500" size={24} />
-  if (item.source === 'qr') return <ShoppingBag weight="fill" className="text-blue-500" size={24} />
-  if (item.source === 'nfc') return <MapPin weight="fill" className="text-purple-500" size={24} />
-  return <Wallet weight="fill" className="text-primary" size={24} />
+function ActivityIcon({ item }: { item: ActivityItem }) {
+  if (item.kind === 'payroll') return <Money weight="fill" size={20} />
+  if (item.source === 'whatsapp') return <Storefront weight="fill" size={20} />
+  if (item.source === 'qr') return <ShoppingBag weight="fill" size={20} />
+  if (item.source === 'nfc') return <MapPin weight="fill" size={20} />
+  return <Wallet weight="fill" size={20} />
 }
 
-export function Dashboard() {
-  const { user } = useAuth()
+export default function Dashboard() {
+  const navigate = useNavigate()
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  // Fetch data from FastAPI backend
-  useEffect(() => {
-    async function fetchDashboard() {
-      if (!user) return
-      try {
-        const token = localStorage.getItem('veil_jwt') // Or wherever you store it
-        const res = await fetch('http://localhost:8000/v1/dashboard', {
-          headers: {
-            'Authorization': `Bearer ${token}`
-          }
-        })
-        if (res.ok) {
-          const json = await res.json()
-          setData(json)
-        }
-      } catch (err) {
-        console.error("Failed to fetch dashboard", err)
-      } finally {
-        setLoading(false)
-      }
+  const loadDashboard = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      setData(await api<DashboardData>('/v1/dashboard'))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not load dashboard data.')
+    } finally {
+      setLoading(false)
     }
-    fetchDashboard()
-  }, [user])
+  }, [])
 
-  if (loading) {
+  useEffect(() => {
+    void loadDashboard()
+  }, [loadDashboard])
+
+  if (loading && !data) {
     return (
-      <div className="flex h-[calc(100vh-4rem)] items-center justify-center">
+      <div className="flex min-h-64 items-center justify-center" role="status" aria-label="Loading dashboard">
         <div className="size-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
       </div>
     )
@@ -107,119 +114,122 @@ export function Dashboard() {
 
   if (!data) {
     return (
-      <div className="p-8 text-center text-foreground/60">
-        <p>Could not load dashboard data. Please try again.</p>
-      </div>
+      <section className="mx-auto max-w-xl rounded-panel border border-primary/10 bg-white p-8 text-center shadow-veil-sm">
+        <h1 className="text-xl font-semibold text-primary">Dashboard unavailable</h1>
+        <p role="alert" className="mt-2 text-sm text-foreground/60">
+          {error ?? 'Could not load dashboard data.'}
+        </p>
+        <Button className="mt-6" loading={loading} onClick={() => void loadDashboard()}>
+          Try again
+        </Button>
+      </section>
     )
   }
 
   const { stats, vault, recentActivity } = data
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-4 pb-12 sm:p-8">
-
+    <div className="mx-auto max-w-6xl space-y-8 pb-4">
       <header className="flex flex-col gap-1">
-        <h1 className="text-3xl font-bold tracking-tight text-primary">Dashboard</h1>
-        <p className="text-foreground/70">Overview of your payments and payroll.</p>
+        <h1 className="text-3xl font-semibold tracking-tight text-primary">Dashboard</h1>
+        <p className="text-sm text-foreground/70">An overview of your payments and payroll.</p>
       </header>
 
-      {/* --- QUICK STATS ROW --- */}
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-        {/* Volume */}
-        <div className="flex flex-col rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-          <span className="text-sm font-medium text-foreground/60">Volume (30d)</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight">{formatCurrency(stats.volume30d)}</span>
-            <span className="text-sm font-semibold text-primary">{stats.currency}</span>
-          </div>
-        </div>
+      <section aria-label="Account overview" className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
+        <StatCard label="Volume (30d)" value={formatCurrency(stats.volume30d)} unit={stats.currency} />
+        <StatCard
+          label="Payments (30d)"
+          value={String(stats.paymentCount30d)}
+          detail={`$${formatCurrency(stats.avgPaymentAmount)} average`}
+        />
+        <StatCard
+          label="Awaiting claim"
+          value={formatCurrency(stats.awaitingClaim)}
+          unit={stats.currency}
+          detail="Funded, pending withdrawal"
+        />
+        <StatCard
+          label="Vault locked"
+          value={formatCurrency(stats.vaultLocked)}
+          unit={stats.currency}
+          detail={
+            <span className="flex items-center gap-1.5">
+              <LockKey size={14} weight="bold" />
+              Releases {formatDate(stats.nextReleaseAt)}
+            </span>
+          }
+          highlight
+        />
+      </section>
 
-        {/* Transactions */}
-        <div className="flex flex-col rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-          <span className="text-sm font-medium text-foreground/60">Transactions</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight">{stats.paymentCount30d}</span>
-          </div>
-          <span className="mt-1 text-sm text-foreground/50">≈${stats.avgPaymentAmount} avg</span>
-        </div>
-
-        {/* Awaiting Claim (Replaced Avg Fee Paid based on the contract) */}
-        <div className="flex flex-col rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-          <span className="text-sm font-medium text-foreground/60">Awaiting Claim</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight">{formatCurrency(stats.awaitingClaim)}</span>
-            <span className="text-sm font-semibold text-primary">{stats.currency}</span>
-          </div>
-          <span className="mt-1 text-sm text-foreground/50">Funded, pending withdrawal</span>
-        </div>
-
-        {/* Vault Locked */}
-        <div className="flex flex-col rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6 shadow-sm">
-          <span className="text-sm font-medium text-emerald-700">Vault Locked</span>
-          <div className="mt-2 flex items-baseline gap-2">
-            <span className="text-3xl font-bold tracking-tight text-emerald-600">{formatCurrency(stats.vaultLocked)}</span>
-            <span className="text-sm font-semibold text-emerald-600/70">{stats.currency}</span>
-          </div>
-          <span className="mt-1 flex items-center gap-1 text-sm text-emerald-600/80">
-            <LockKey size={14} weight="bold" />
-            Releasing {formatDate(stats.nextReleaseAt)}
+      <section aria-label="Shortcuts" className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+        <Button
+          size="lg"
+          className="h-auto min-h-16 justify-start px-5 py-3 text-left"
+          leftIcon={<Lightning size={22} weight="fill" />}
+          onClick={() => navigate('/payments')}
+        >
+          <span className="flex flex-col items-start">
+            <span>Request payment</span>
+            <span className="text-xs font-normal opacity-75">Create a checkout link for a customer</span>
           </span>
-        </div>
+        </Button>
+        <Button
+          variant="secondary"
+          size="lg"
+          className="h-auto min-h-16 justify-start px-5 py-3 text-left"
+          leftIcon={<PaperPlaneRight size={22} weight="fill" />}
+          onClick={() => navigate('/payroll')}
+        >
+          <span className="flex flex-col items-start">
+            <span>Set up payroll</span>
+            <span className="text-xs font-normal text-foreground/60">Create a recipient group and schedule</span>
+          </span>
+        </Button>
       </section>
 
-      {/* --- ACTIONS ROW --- */}
-      <section className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-        <Button size="lg" className="h-16 justify-start px-6 text-lg" leftIcon={<Lightning size={24} weight="fill" className="text-yellow-400" />}>
-          <div className="flex flex-col items-start leading-tight">
-            <span>Request Payment</span>
-            <span className="text-xs font-normal opacity-80">Generate a private pay link or QR</span>
-          </div>
-        </Button>
-        <Button variant="secondary" size="lg" className="h-16 justify-start px-6 text-lg" leftIcon={<PaperPlaneRight size={24} weight="fill" />}>
-          <div className="flex flex-col items-start leading-tight">
-            <span>Run Payroll</span>
-            <span className="text-xs font-normal opacity-80">Schedule vault & pay team</span>
-          </div>
-        </Button>
-      </section>
+      {error && (
+        <p role="alert" className="rounded-card bg-red-50 px-4 py-3 text-sm text-red-700">
+          Dashboard refresh failed: {error}
+        </p>
+      )}
 
       <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
-        {/* --- MAIN COLUMN: RECENT ACTIVITY --- */}
-        <section className="col-span-1 lg:col-span-2 space-y-4">
-          <div className="flex items-center justify-between">
-            <h2 className="text-xl font-semibold tracking-tight">Recent Activity</h2>
-            <button className="text-sm font-medium text-primary hover:underline">view all &rarr;</button>
+        <section className="space-y-4 lg:col-span-2">
+          <div className="flex items-center justify-between gap-4">
+            <h2 className="text-xl font-semibold tracking-tight">Recent activity</h2>
+            <button
+              type="button"
+              onClick={() => navigate('/payments')}
+              className="text-sm font-medium text-primary hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+            >
+              View payments
+            </button>
           </div>
-
-          <div className="overflow-hidden rounded-2xl border border-primary/10 bg-white shadow-sm">
+          <div className="overflow-hidden rounded-panel border border-primary/10 bg-white shadow-veil-sm">
             {recentActivity.length === 0 ? (
-               <div className="p-8 text-center text-sm text-foreground/50">No recent activity.</div>
+              <p className="p-8 text-center text-sm text-foreground/60">No recent activity yet.</p>
             ) : (
               <ul className="divide-y divide-primary/5">
                 {recentActivity.map((item) => (
-                  <li key={item.id} className="flex items-center justify-between p-4 hover:bg-primary/[0.02] sm:p-5">
-                    <div className="flex items-center gap-4">
-                      <div className="flex size-10 flex-shrink-0 items-center justify-center rounded-full bg-primary/10">
-                        {getActivityIcon(item)}
-                      </div>
-                      <div className="flex flex-col">
-                        <span className="font-semibold">{item.title}</span>
-                        <div className="flex items-center gap-2 text-sm text-foreground/60">
-                          <span>{item.source || (item.kind === 'payroll' ? 'Vault release' : 'Web Link')}</span>
-                          {item.isPrivate && (
-                            <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-100">
-                              Private
-                            </span>
-                          )}
-                        </div>
+                  <li key={`${item.kind}-${item.id}`} className="flex items-center justify-between gap-4 p-4 sm:p-5">
+                    <div className="flex min-w-0 items-center gap-3">
+                      <span className="flex size-10 shrink-0 items-center justify-center rounded-full bg-primary/5 text-primary">
+                        <ActivityIcon item={item} />
+                      </span>
+                      <div className="min-w-0">
+                        <p className="truncate font-medium">{item.title}</p>
+                        <p className="mt-0.5 text-xs text-foreground/60">
+                          {item.source || (item.kind === 'payroll' ? 'Payroll' : 'Payment link')}
+                          {item.isPrivate && <span className="ml-2">· Private</span>}
+                        </p>
                       </div>
                     </div>
-
-                    <div className="flex flex-col items-end">
-                      <span className={`font-semibold ${item.direction === 'in' ? 'text-emerald-600' : 'text-foreground'}`}>
+                    <div className="shrink-0 text-right">
+                      <p className={`font-semibold ${item.direction === 'in' ? 'text-emerald-700' : 'text-foreground'}`}>
                         {item.direction === 'in' ? '+' : '−'}{item.amount} {item.currency}
-                      </span>
-                      <span className="text-sm text-foreground/50">{getRelativeTime(item.occurredAt)}</span>
+                      </p>
+                      <p className="mt-0.5 text-xs text-foreground/50">{relativeTime(item.occurredAt)}</p>
                     </div>
                   </li>
                 ))}
@@ -228,48 +238,68 @@ export function Dashboard() {
           </div>
         </section>
 
-        {/* --- SIDE COLUMN: VAULT STATUS --- */}
-        <section className="col-span-1 space-y-4">
-          <h2 className="text-xl font-semibold tracking-tight">Active Vault</h2>
-
+        <section className="space-y-4">
+          <h2 className="text-xl font-semibold tracking-tight">Active vault</h2>
           {vault ? (
-             <div className="relative overflow-hidden rounded-2xl border border-emerald-500/20 bg-gradient-to-br from-emerald-500/10 to-emerald-500/5 p-6 shadow-sm">
-                <div className="absolute -right-4 -top-4 size-24 rounded-full bg-emerald-500/10 blur-2xl" />
-
-                <h3 className="font-semibold text-emerald-900">{vault.title}</h3>
-
-                <div className="mt-4 flex items-end justify-between">
-                  <div className="flex flex-col">
-                    <span className="text-2xl font-bold tracking-tight text-emerald-700">
-                      {vault.total} <span className="text-lg">{vault.token}</span>
-                    </span>
-                  </div>
-                </div>
-
-                <div className="mt-6 flex flex-col gap-3">
-                  <div className="flex items-center justify-between text-sm font-medium text-emerald-800/80">
-                    <span className="flex items-center gap-1.5"><LockKey size={16} /> {vault.recipientCount} recipients</span>
-                    <span>Funded</span>
-                  </div>
-
-                  <div className="h-2 w-full overflow-hidden rounded-full bg-emerald-500/20">
-                    {/* Hardcoding 100% width since it's fully funded if it's in the vault */}
-                    <div className="h-full w-full rounded-full bg-emerald-500" />
-                  </div>
-
-                  <p className="text-center text-xs font-medium text-emerald-700/70">
-                    auto-release {getRelativeTime(vault.releaseAt)}
-                  </p>
-                </div>
-             </div>
+            <article className="rounded-panel border border-emerald-500/20 bg-emerald-500/5 p-6">
+              <p className="font-semibold text-emerald-950">{vault.title}</p>
+              <p className="mt-4 text-2xl font-semibold tracking-tight text-emerald-800">
+                {vault.total} <span className="text-base">{vault.token}</span>
+              </p>
+              <div className="mt-5 flex items-center justify-between text-sm text-emerald-900/75">
+                <span className="flex items-center gap-1.5"><LockKey size={16} /> {vault.recipientCount} recipients</span>
+                <span className="capitalize">{vault.status}</span>
+              </div>
+              <p className="mt-3 text-center text-xs text-emerald-800/70">
+                Releases {relativeTime(vault.releaseAt)}
+              </p>
+            </article>
           ) : (
-            <div className="flex h-48 flex-col items-center justify-center rounded-2xl border border-dashed border-primary/20 bg-white/50 text-center">
-              <LockKey size={32} className="mb-2 text-foreground/30" />
+            <div className="flex min-h-40 flex-col items-center justify-center rounded-panel border border-dashed border-primary/20 bg-white/60 p-6 text-center">
+              <LockKey size={28} className="mb-2 text-foreground/30" />
               <p className="text-sm font-medium text-foreground/60">No active vault scheduled.</p>
+              <button
+                type="button"
+                onClick={() => navigate('/payroll')}
+                className="mt-3 text-sm font-medium text-primary hover:underline"
+              >
+                Set up payroll
+              </button>
             </div>
           )}
         </section>
       </div>
     </div>
+  )
+}
+
+function StatCard({
+  label,
+  value,
+  unit,
+  detail,
+  highlight = false,
+}: {
+  label: string
+  value: string
+  unit?: string
+  detail?: ReactNode
+  highlight?: boolean
+}) {
+  return (
+    <article
+      className={`rounded-panel border p-5 shadow-veil-sm ${
+        highlight
+          ? 'border-emerald-500/20 bg-emerald-500/5'
+          : 'border-primary/10 bg-white'
+      }`}
+    >
+      <p className="text-sm font-medium text-foreground/60">{label}</p>
+      <p className={`mt-3 flex items-baseline gap-2 text-2xl font-semibold tracking-tight ${highlight ? 'text-emerald-800' : ''}`}>
+        <span>{value}</span>
+        {unit && <span className="text-sm font-medium text-foreground/50">{unit}</span>}
+      </p>
+      {detail && <div className="mt-2 text-xs text-foreground/55">{detail}</div>}
+    </article>
   )
 }
