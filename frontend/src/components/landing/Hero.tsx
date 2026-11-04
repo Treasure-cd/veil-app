@@ -19,18 +19,17 @@ export default function Hero() {
       {/* glow */}
       <motion.div
         aria-hidden
-        className="absolute -left-32 top-10 h-[420px] w-[420px] rounded-full bg-primary/20 blur-3xl"
+        className="absolute -left-[10vw] top-0 h-[45vw] w-[45vw] max-h-[700px] max-w-[700px] rounded-full bg-primary/20 blur-3xl"
         animate={{ x: [0, 60, 0], y: [0, 40, 0] }}
         transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
       />
       <motion.div
         aria-hidden
-        className="absolute -right-24 bottom-0 h-[460px] w-[460px] rounded-full bg-accent/20 blur-3xl"
+        className="absolute -right-[10vw] bottom-0 h-[45vw] w-[45vw] max-h-[700px] max-w-[700px] rounded-full bg-accent/20 blur-3xl"
         animate={{ x: [0, -50, 0], y: [0, -50, 0] }}
         transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
       />
-
-      <div className="relative mx-auto flex w-full max-w-6xl flex-wrap items-center gap-16 px-6 py-20 md:px-12">
+      <div className="relative flex w-full flex-wrap items-center justify-between gap-16 px-6 py-20 md:px-12 lg:px-20">
         {/* copy */}
         <div className="min-w-0 flex-1 basis-80">
           <motion.span
@@ -39,10 +38,10 @@ export default function Hero() {
             transition={{ delay: 0.1, duration: 0.5, ease }}
             className="mb-8 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-white/60 px-3.5 py-1.5 text-xs font-medium text-primary backdrop-blur"
           >
-            <span className="relative flex h-2 w-2">
+            {/*<span className="relative flex h-2 w-2">
               <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
               <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-            </span>
+            </span>*/}
             Private payments on Solana
           </motion.span>
 

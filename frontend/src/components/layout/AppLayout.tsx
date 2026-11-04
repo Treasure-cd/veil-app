@@ -18,7 +18,7 @@ export function AppLayout() {
 
       <div className={showAppNavigation ? 'md:pl-60' : undefined}>
         {!isLanding && <Header />}
-        {isCheckout ? (
+        {isCheckout || isLanding ? (
           <Outlet />
         ) : (
           <main className="mx-auto w-full max-w-6xl px-4 py-6 pb-24 md:px-8 md:py-8">

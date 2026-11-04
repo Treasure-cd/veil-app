@@ -29,7 +29,7 @@ function CardHeader({
 
 export default function Features() {
   return (
-    <section className="relative px-6 py-28 md:px-12">
+    <section className="relative bg-primary/[0.025] px-6 py-24 md:px-12 md:py-28">
       <div className="mx-auto max-w-6xl">
         <div className="mx-auto mb-16 max-w-xl text-center">
           <motion.p

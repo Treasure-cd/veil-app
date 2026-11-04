@@ -24,7 +24,7 @@ export default function PayrollSpotlight() {
   const [view, setView] = useState<View>('employer')
 
   return (
-    <section id="payroll" className="relative px-6 py-28 md:px-12">
+    <section id="payroll" className="relative bg-white/50 px-6 py-24 md:px-12 md:py-28">
       <div className="mx-auto grid max-w-6xl items-center gap-16 md:grid-cols-2">
         {/* copy */}
         <div>

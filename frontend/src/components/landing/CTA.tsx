@@ -6,13 +6,13 @@ const ease = [0.22, 1, 0.36, 1] as const
 
 export default function CTA() {
   return (
-    <section className="px-6 pb-28 pt-12 md:px-12">
+    <section className="relative isolate">
       <motion.div
-        initial={{ opacity: 0, y: 48, scale: 0.97 }}
-        whileInView={{ opacity: 1, y: 0, scale: 1 }}
+        initial={{ opacity: 0, y: 48 }}
+        whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: '-80px' }}
         transition={{ duration: 0.9, ease }}
-        className="relative mx-auto max-w-6xl overflow-hidden rounded-[2.5rem] bg-secondary px-8 py-24 text-center"
+        className="relative w-full overflow-hidden bg-secondary px-6 py-24 text-center md:px-12"
         style={{
           backgroundImage: 'radial-gradient(rgba(255,255,255,0.09) 1px, transparent 1px)',
           backgroundSize: '24px 24px',
@@ -31,7 +31,7 @@ export default function CTA() {
           transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
         />
 
-        <div className="relative">
+        <div className="relative mx-auto max-w-6xl">
           <motion.p
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}
