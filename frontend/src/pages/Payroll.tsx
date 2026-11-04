@@ -3,7 +3,7 @@ import Papa from 'papaparse'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
 import {
-  Users, CalendarBlank, Clock, Coins, UploadSimple, Plus,
+  Users, CalendarBlank, UploadSimple, Plus,
   Trash, LockKey, CheckCircle, WarningCircle
 } from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
@@ -39,11 +39,6 @@ const isValidAmount = (amount: string) => {
   if (!/^\d*\.?\d+$/.test(amount)) return false
   const num = parseFloat(amount)
   return Number.isFinite(num) && num > 0
-}
-
-const truncateAddress = (address: string) => {
-  if (address.length <= 14) return address
-  return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
 
 export default function Payroll() {
