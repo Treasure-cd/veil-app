@@ -5,17 +5,18 @@ import { CheckCircle, Lock } from '@phosphor-icons/react'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
+// Updated to tell the story of a regular small business owner settling their daily/weekly help
 const ROWS = [
-  { name: 'Ada O.', amount: '1,200.00' },
-  { name: 'Tunde B.', amount: '950.00' },
-  { name: 'Chioma E.', amount: '1,400.00' },
-  { name: 'Emeka N.', amount: '800.00' },
+  { name: 'Chioma E.', role: 'Material Supplier', amount: '320.00' },
+  { name: 'Ada O.', role: 'Social Media', amount: '150.00' },
+  { name: 'Emeka N.', role: 'Store Assistant', amount: '100.00' },
+  { name: 'Tunde B.', role: 'Logistics/Delivery', amount: '45.00' },
 ]
 
 const POINTS = [
-  'Fund once, lock it in a vault',
-  'Individual salaries stay hidden',
-  'Releases automatically on schedule',
+  'Schedule payments for staff and suppliers',
+  'Individual payouts remain hidden on-chain',
+  'Set it once, auto-releases on payday',
 ]
 
 type View = 'employer' | 'public'
@@ -34,7 +35,7 @@ export default function PayrollSpotlight() {
             viewport={{ once: true }}
             className="mb-4 text-sm font-medium text-primary"
           >
-            Confidential payroll
+            Confidential Settlements
           </motion.p>
           <motion.h2
             initial={{ opacity: 0, y: 24, filter: 'blur(8px)' }}
@@ -43,7 +44,7 @@ export default function PayrollSpotlight() {
             transition={{ duration: 0.7, ease }}
             className="mb-6 text-[clamp(1.9rem,3.5vw,2.75rem)] font-semibold leading-tight tracking-tight"
           >
-            Pay your team. Keep the numbers private.
+            Pay your people. Keep their cuts private.
           </motion.h2>
           <motion.p
             initial={{ opacity: 0, y: 16 }}
@@ -52,8 +53,7 @@ export default function PayrollSpotlight() {
             transition={{ delay: 0.1, duration: 0.6, ease }}
             className="mb-8 max-w-[44ch] text-base leading-relaxed text-foreground/60"
           >
-            Cross-border payroll shouldn't mean everyone seeing what everyone earns. Veil
-            holds the funds, hides the amounts, and pays out on the day you choose.
+            Whether it's your delivery rider, your supplier, or your assistant, paying the people who help you run your business shouldn't mean exposing your wallet history. Veil’s vault schedules bulk stablecoin payouts where everyone gets paid, but nobody sees the full picture.
           </motion.p>
 
           <ul className="mb-10 space-y-4">
@@ -77,7 +77,7 @@ export default function PayrollSpotlight() {
               to="/app"
               className="inline-flex h-12 items-center rounded-full bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
             >
-              Run a payroll
+              Schedule a payout
             </Link>
           </motion.div>
         </div>
@@ -96,10 +96,10 @@ export default function PayrollSpotlight() {
             {/* header row */}
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div>
-                <p className="text-[11px] text-foreground/50">Payroll vault</p>
+                <p className="text-[11px] text-foreground/50">Weekly Settlement Vault</p>
                 <p className="flex items-center gap-2 font-mono text-xl font-medium">
                   <Lock size={18} weight="fill" className="text-primary" />
-                  4,350.00 USDC
+                  615.00 USDC
                 </p>
               </div>
 
@@ -137,10 +137,13 @@ export default function PayrollSpotlight() {
                   className="flex items-center justify-between py-3.5"
                 >
                   <div className="flex items-center gap-3">
-                    <span className="flex h-8 w-8 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
+                    <span className="flex h-9 w-9 items-center justify-center rounded-full bg-primary/10 text-xs font-medium text-primary">
                       {r.name[0]}
                     </span>
-                    <span className="text-sm">{r.name}</span>
+                    <div className="flex flex-col">
+                      <span className="text-sm font-medium">{r.name}</span>
+                      <span className="text-[10px] text-foreground/50">{r.role}</span>
+                    </div>
                   </div>
 
                   <AnimatePresence mode="wait" initial={false}>
@@ -161,7 +164,7 @@ export default function PayrollSpotlight() {
 
             {/* footer */}
             <div className="mt-5 flex items-center justify-between rounded-2xl bg-primary/5 px-4 py-3 text-xs">
-              <span className="text-foreground/60">Releases Friday, 09:00</span>
+              <span className="text-foreground/60">Releases Friday, 17:00</span>
               <span className="flex items-center gap-1.5 font-medium text-primary">
                 <motion.span
                   className="h-1.5 w-1.5 rounded-full bg-primary"

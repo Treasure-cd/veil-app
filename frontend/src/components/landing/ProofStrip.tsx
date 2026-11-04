@@ -1,17 +1,17 @@
 import { motion } from 'framer-motion'
-import { Coins, LockKey, Bank, DeviceMobile } from '@phosphor-icons/react'
+import { Lightning, LockKey, WhatsappLogo, DeviceMobile } from '@phosphor-icons/react'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
 const FACTS = [
-  { icon: Coins, title: 'USDC on Solana', sub: 'Fast, low-fee rails' },
-  { icon: LockKey, title: 'Private by default', sub: 'Amounts stay hidden' },
-  { icon: Bank, title: 'Naira off-ramp', sub: 'Straight to your bank' },
-  { icon: DeviceMobile, title: 'No hardware', sub: 'Just your phone' },
+  { icon: Lightning, title: 'Instant Settlement', sub: 'Lightning-fast on Solana' },
+  { icon: LockKey, title: 'Confidential by Default', sub: 'Shielded via Umbra' },
+  { icon: WhatsappLogo, title: 'WhatsApp Native', sub: 'Bot-generated checkouts' },
+  { icon: DeviceMobile, title: 'Hardware-Free POS', sub: 'Your phone is the terminal' },
 ]
 
-// placeholder wordmarks; swap for real SVG logos
-const BUILT_WITH = ['Solana', 'Umbra', 'Pajramp', 'WhatsApp', 'Phantom', 'Solflare']
+
+const BUILT_WITH = ['Solana', 'Umbra', 'Next.js', 'WhatsApp', 'Phantom', 'Solflare']
 
 export default function ProofStrip() {
   return (

@@ -39,7 +39,7 @@ export default function CTA() {
             transition={{ delay: 0.2 }}
             className="mb-5 text-sm font-medium text-white/60"
           >
-            Get started
+            Try the MVP
           </motion.p>
 
           <motion.h2
@@ -49,7 +49,7 @@ export default function CTA() {
             transition={{ delay: 0.3, duration: 0.8, ease }}
             className="mx-auto mb-5 max-w-2xl text-[clamp(2rem,4.5vw,3.5rem)] font-semibold leading-[1.05] tracking-tight text-white"
           >
-            Your next invoice is one message away.
+            Your next checkout is one message away.
           </motion.h2>
 
           <motion.p
@@ -59,7 +59,7 @@ export default function CTA() {
             transition={{ delay: 0.45, duration: 0.6, ease }}
             className="mx-auto mb-10 max-w-[42ch] text-base text-white/60"
           >
-            Connect a wallet, send your first invoice, and get paid in naira. No signup form.
+            Connect a wallet, generate your first secure link, and get paid instantly in stablecoins. Zero hardware required.
           </motion.p>
 
           <motion.div
@@ -75,7 +75,7 @@ export default function CTA() {
               to="/app"
               className="inline-flex h-14 items-center gap-2 rounded-full bg-white px-9 text-sm font-semibold text-secondary shadow-[0_0_60px_rgba(255,255,255,0.25)]"
             >
-              Open app
+              Launch App
               <ArrowRight weight="bold" size={16} />
             </Link>
           </motion.div>

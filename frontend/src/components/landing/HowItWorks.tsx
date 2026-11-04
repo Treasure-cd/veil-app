@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { Check, Checks, PenNib } from '@phosphor-icons/react'
+import { Check, Checks, PenNib, ShieldCheck } from '@phosphor-icons/react'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -13,7 +13,7 @@ function RequestVisual() {
         transition={{ delay: 0.3, type: 'spring', stiffness: 200, damping: 16 }}
         className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-xs text-white"
       >
-        Invoice 250 USDC · brand shoot
+        Invoice 30k · custom waistbeads
         <Checks size={14} weight="bold" className="ml-auto mt-1 text-white/70" />
       </motion.div>
       <motion.div
@@ -23,7 +23,7 @@ function RequestVisual() {
         transition={{ delay: 0.8, type: 'spring', stiffness: 200, damping: 16 }}
         className="max-w-[85%] rounded-2xl rounded-bl-md border border-foreground/10 bg-white px-4 py-2.5 text-xs text-foreground/70"
       >
-        Payment link ready. Share it with your customer.
+        Payment link ready. Share it to get paid in stablecoins.
       </motion.div>
     </div>
   )
@@ -43,7 +43,7 @@ function PayVisual() {
           <PenNib size={14} weight="duotone" className="text-primary" />
           Sign payment
         </div>
-        <p className="mb-4 font-mono text-lg font-medium text-foreground">250.00 USDC</p>
+        <p className="mb-4 font-mono text-lg font-medium text-foreground">18.50 USDC</p>
         <div className="relative">
           <motion.span
             aria-hidden
@@ -52,7 +52,7 @@ function PayVisual() {
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
           />
           <div className="relative rounded-full bg-primary py-2 text-center text-xs font-medium text-white">
-            Approve
+            Approve Transaction
           </div>
         </div>
       </motion.div>
@@ -60,6 +60,7 @@ function PayVisual() {
   )
 }
 
+// Updated visual to focus on shielded stablecoin settlement rather than bank off-ramping
 function SettleVisual() {
   return (
     <div className="flex h-full flex-col items-center justify-center gap-2">
@@ -68,9 +69,9 @@ function SettleVisual() {
         whileInView={{ scale: 1, rotate: 0 }}
         viewport={{ once: true }}
         transition={{ delay: 0.4, type: 'spring', stiffness: 260, damping: 14 }}
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-accent text-white"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1a0a20] text-white"
       >
-        <Check size={20} weight="bold" />
+        <ShieldCheck size={20} weight="fill" className="text-primary" />
       </motion.div>
       <motion.p
         initial={{ opacity: 0, y: 10 }}
@@ -79,9 +80,9 @@ function SettleVisual() {
         transition={{ delay: 0.7, duration: 0.5, ease }}
         className="font-mono text-2xl font-medium text-foreground"
       >
-        ₦385,000
+        ***.** USDC
       </motion.p>
-      <p className="text-[11px] text-foreground/50">Received in your bank</p>
+      <p className="text-[11px] text-foreground/50">Settled & Shielded via Umbra</p>
     </div>
   )
 }
@@ -89,20 +90,20 @@ function SettleVisual() {
 const STEPS = [
   {
     n: '01',
-    title: 'Request',
-    desc: 'Send a text or voice note on WhatsApp, or create a link in the app. Your invoice is ready in seconds.',
+    title: 'Generate',
+    desc: 'Just text the WhatsApp bot or use the web app. Veil generates a secure checkout link in seconds, turning chat into a storefront.',
     visual: RequestVisual,
   },
   {
     n: '02',
-    title: 'Pay',
-    desc: 'Your customer opens the link, connects their wallet and signs once. No accounts, no passwords.',
+    title: 'Collect',
+    desc: 'Customers open the link, connect their wallet, and pay with stablecoins in one click. No manual transfers or fake receipts.',
     visual: PayVisual,
   },
   {
     n: '03',
-    title: 'Settle',
-    desc: 'Dollars go in, naira comes out. Funds land in your local bank account without you touching crypto.',
+    title: 'Shield',
+    desc: 'Payments settle instantly on Solana. Utilizing Umbra privacy protocols, your wallet address and business volume remain invisible on-chain.',
     visual: SettleVisual,
   },
 ]
@@ -127,7 +128,7 @@ export default function HowItWorks() {
             transition={{ duration: 0.7, ease }}
             className="text-[clamp(1.9rem,3.5vw,2.75rem)] font-semibold leading-tight tracking-tight"
           >
-            Three steps. No hardware.
+            Frictionless checkout. <br/> Zero hardware required.
           </motion.h2>
         </div>
 
@@ -142,7 +143,7 @@ export default function HowItWorks() {
               whileHover={{ y: -6 }}
               className="rounded-3xl border border-foreground/10 bg-white p-4 shadow-[0_2px_24px_rgba(46,0,66,0.05)]"
             >
-              <div className="mb-6 h-48 overflow-hidden rounded-2xl bg-primary/5 p-4">
+              <div className="mb-6 h-48 overflow-hidden rounded-2xl bg-primary/5 p-4 flex items-center justify-center">
                 <s.visual />
               </div>
               <div className="px-3 pb-3">

@@ -11,20 +11,20 @@ import Landing from './pages/Landing'
 
 function App() {
   return (
-    <AppProviders>
-      <MotionConfig reducedMotion="user">
-        <Routes>
+    <MotionConfig reducedMotion="user">
+      <Routes>
+        <Route path="/" element={<Landing />} />
+        <Route element={<AppProviders />}>
           <Route element={<AppLayout />}>
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/settings" element={<Settings />} />
-            <Route path="/" element={<Landing />} />
             <Route path="/pay/:id" element={<Checkout />} />
           </Route>
-        </Routes>
-      </MotionConfig>
-    </AppProviders>
+        </Route>
+      </Routes>
+    </MotionConfig>
   )
 }
 

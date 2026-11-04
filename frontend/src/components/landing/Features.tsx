@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { ChatCircleText, EyeSlash, Lightning, LockKey, ArrowRight } from '@phosphor-icons/react'
+import { ChatCircleText, EyeSlash, DeviceMobile, LockKey, ClockCounterClockwise } from '@phosphor-icons/react'
 import SpotlightCard from './SpotlightCard'
 
 const ease = [0.22, 1, 0.36, 1] as const
@@ -57,16 +57,16 @@ export default function Features() {
             <CardHeader
               icon={LockKey}
               title="Confidential payroll"
-              desc="Lock funds in a vault, hide individual salaries, and release automatically on schedule."
+              desc="Lock funds in a vault, hide individual salaries, and execute bulk multi-recipient payouts automatically via CSV."
             />
             <div className="mt-8 rounded-2xl bg-primary/5 p-5">
               <div className="mb-3 flex items-end justify-between">
                 <div>
-                  <p className="text-[11px] text-foreground/50">Vault locked</p>
+                  <p className="text-[11px] text-foreground/50">Payroll vault locked</p>
                   <p className="font-mono text-2xl font-medium">4,350 USDC</p>
                 </div>
-                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-primary">
-                  Scheduled
+                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-primary shadow-sm">
+                  Scheduled for Friday
                 </span>
               </div>
               <div className="h-2 overflow-hidden rounded-full bg-primary/10">
@@ -86,11 +86,11 @@ export default function Features() {
             <CardHeader
               icon={ChatCircleText}
               title="WhatsApp invoicing"
-              desc="Text or voice note in, payment link out."
+              desc="Text the bot. Get a secure checkout link instantly."
             />
             <div className="mt-8 space-y-2">
               <div className="ml-auto w-fit rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-xs text-white">
-                invoice Tunde 150 usdc
+                invoice 30k for waistbeads
               </div>
               <div className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-primary/5 px-3.5 py-3">
                 {[0, 1, 2].map((d) => (
@@ -105,27 +105,27 @@ export default function Features() {
             </div>
           </SpotlightCard>
 
-          {/* Settlement */}
+          {/* Replaced Settlement with Hardware-Free POS to match the new pitch */}
           <SpotlightCard className="md:col-span-3">
             <CardHeader
-              icon={Lightning}
-              title="Instant settlement"
-              desc="Automatic off-ramp to local bank accounts through Pajramp."
+              icon={DeviceMobile}
+              title="Hardware-Free POS"
+              desc="Your phone is the terminal. Track volume, scan QR codes, and view complete transaction history without buying physical hardware."
             />
-            <div className="mt-8 flex items-center gap-3">
-              <span className="rounded-full bg-primary/10 px-4 py-2 font-mono text-sm text-primary">
-                USDC
-              </span>
-              <motion.span
-                animate={{ x: [0, 8, 0] }}
-                transition={{ duration: 1.4, repeat: Infinity, ease: 'easeInOut' }}
-                className="text-foreground/40"
-              >
-                <ArrowRight size={18} weight="bold" />
-              </motion.span>
-              <span className="rounded-full bg-accent/10 px-4 py-2 font-mono text-sm text-accent">
-                NGN
-              </span>
+            <div className="mt-8 flex flex-col gap-2 rounded-xl bg-white p-3 shadow-sm border border-foreground/5">
+              <div className="flex items-center justify-between border-b border-foreground/5 pb-2">
+                <div className="flex items-center gap-2">
+                  <div className="h-6 w-6 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                    <ClockCounterClockwise size={12} weight="bold" />
+                  </div>
+                  <span className="text-xs font-medium text-foreground">Recent Volume</span>
+                </div>
+                <span className="font-mono text-sm font-semibold">1,250 USDC</span>
+              </div>
+              <div className="flex justify-between text-[10px] text-foreground/50 pt-1">
+                <span>Total Transactions</span>
+                <span>48 this week</span>
+              </div>
             </div>
           </SpotlightCard>
 
@@ -134,15 +134,15 @@ export default function Features() {
             <CardHeader
               icon={EyeSlash}
               title="Private by default"
-              desc="Amounts and recipients stay between the people involved."
+              desc="Powered by Umbra, exact transaction amounts and wallet histories remain invisible on the blockchain."
             />
-            <div className="mt-8">
+            <div className="mt-8 flex h-16 items-center rounded-xl bg-primary/5 px-4">
               <motion.p
-                animate={{ filter: ['blur(0px)', 'blur(7px)', 'blur(7px)', 'blur(0px)'] }}
+                animate={{ filter: ['blur(0px)', 'blur(8px)', 'blur(8px)', 'blur(0px)'] }}
                 transition={{ duration: 4, repeat: Infinity, times: [0, 0.35, 0.7, 1] }}
-                className="font-mono text-2xl font-medium"
+                className="font-mono text-3xl font-semibold text-foreground tracking-tight"
               >
-                250.00 USDC
+                18.50 USDC
               </motion.p>
             </div>
           </SpotlightCard>

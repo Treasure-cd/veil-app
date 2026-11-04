@@ -1,12 +1,12 @@
 import { motion } from 'framer-motion'
 import { Link } from 'react-router'
-import { ArrowRight, LockKey } from '@phosphor-icons/react'
+import { ArrowRight, LockKey, PlayCircle } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
-// swap this to try other headlines; last word gets the accent colour
-const HEADLINE = ['Get', 'paid', 'in', 'a', 'message.']
+// Punchy, active headline
+const HEADLINE = ['Turn', 'chats', 'into', 'checkouts.']
 
 const word = {
   hidden: { opacity: 0, y: 28, filter: 'blur(10px)' },
@@ -15,8 +15,9 @@ const word = {
 
 export default function Hero() {
   return (
-    <section className="relative flex min-h-screen items-center overflow-hidden pt-24">
-      {/* glow */}
+    // Added a subtle background grid to make the floating glows look more grounded and technical
+    <section className="relative flex min-h-screen items-center overflow-hidden pt-24 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]">
+      {/* glows */}
       <motion.div
         aria-hidden
         className="absolute -left-[10vw] top-0 h-[45vw] w-[45vw] max-h-[700px] max-w-[700px] rounded-full bg-primary/20 blur-3xl"
@@ -29,21 +30,10 @@ export default function Hero() {
         animate={{ x: [0, -50, 0], y: [0, -50, 0] }}
         transition={{ duration: 16, repeat: Infinity, ease: 'easeInOut' }}
       />
+
       <div className="relative flex w-full flex-wrap items-center justify-between gap-16 px-6 py-20 md:px-12 lg:px-20">
         {/* copy */}
         <div className="min-w-0 flex-1 basis-80">
-          <motion.span
-            initial={{ opacity: 0, y: 12 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ delay: 0.1, duration: 0.5, ease }}
-            className="mb-8 inline-flex items-center gap-2 rounded-full border border-primary/20 bg-white/60 px-3.5 py-1.5 text-xs font-medium text-primary backdrop-blur"
-          >
-            {/*<span className="relative flex h-2 w-2">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-primary/60" />
-              <span className="relative inline-flex h-2 w-2 rounded-full bg-primary" />
-            </span>*/}
-            Private payments on Solana
-          </motion.span>
 
           <motion.h1
             initial="hidden"
@@ -70,24 +60,23 @@ export default function Hero() {
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.75, duration: 0.6, ease }}
-            className="mb-9 max-w-[42ch] text-base leading-relaxed text-foreground/60"
+            className="mb-9 max-w-[42ch] text-base leading-relaxed text-foreground/70"
           >
-            Send an invoice from WhatsApp. Your customer pays in dollars, you receive naira
-            in your bank, and the details stay between the two of you.
+            Generate secure payment links directly from WhatsApp. Your customers pay instantly in stablecoins, and your business finances stay completely private.
           </motion.p>
 
           <motion.div
             initial={{ opacity: 0, y: 16 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: 0.9, duration: 0.6, ease }}
-            className="flex flex-wrap items-center gap-3"
+            className="flex flex-wrap items-center gap-4"
           >
             <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
               <Link
                 to="/app"
-                className="inline-flex h-12 items-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+                className="text-bold inline-flex h-12 items-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
               >
-                Open app
+                Launch App
                 <ArrowRight weight="bold" size={16} />
               </Link>
             </motion.div>
@@ -95,9 +84,10 @@ export default function Hero() {
               href="#how"
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
-              className="inline-flex h-12 items-center rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
+              className="inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
             >
-              See how it works
+              <PlayCircle weight="fill" size={20} className="text-primary/70" />
+              Watch the demo
             </motion.a>
           </motion.div>
         </div>
@@ -116,14 +106,15 @@ export default function Hero() {
             <WhatsappMockup />
           </motion.div>
 
+          {/* Adjusted the floating badges to match the current stablecoin state rather than fiat off-ramping */}
           <motion.div
             initial={{ opacity: 0, scale: 0.6, x: -20 }}
             animate={{ opacity: 1, scale: 1, x: 0 }}
             transition={{ delay: 1.3, type: 'spring', stiffness: 200, damping: 14 }}
             className="absolute -left-8 bottom-24 rounded-2xl border border-foreground/10 bg-white/90 px-4 py-3 shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur"
           >
-            <p className="text-[10px] text-foreground/50">Settled to bank</p>
-            <p className="font-mono text-sm font-medium text-foreground">₦1,250,000</p>
+            <p className="text-[10px] text-foreground/50">Instant Settlement</p>
+            <p className="font-mono text-sm font-medium text-foreground">18.50 USDC</p>
           </motion.div>
 
           <motion.div
@@ -133,7 +124,7 @@ export default function Hero() {
             className="absolute -right-6 top-20 flex items-center gap-2 rounded-full border border-primary/20 bg-white/90 px-3.5 py-2 text-xs font-medium text-primary shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur"
           >
             <LockKey weight="fill" size={14} />
-            Private
+            Data Shielded
           </motion.div>
         </motion.div>
       </div>
