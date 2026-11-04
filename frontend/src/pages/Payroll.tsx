@@ -1,374 +1,420 @@
-import { useCallback, useEffect, useState, type FormEvent } from 'react'
-import { Plus, UsersThree } from '@phosphor-icons/react'
+import React, { useState, useRef, useMemo } from 'react'
+import Papa from 'papaparse'
 import { PublicKey } from '@solana/web3.js'
+import { useWallet } from '@solana/wallet-adapter-react'
+import {
+  Users, CalendarBlank, Clock, Coins, UploadSimple, Plus,
+  Trash, LockKey, CheckCircle, WarningCircle
+} from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
-import { api } from '../services/api'
+// Import your umbra wrapper here when ready:
+// import { umbra } from '../lib/umbra'
 
-type Token = 'USDC' | 'SOL'
+// --- Types ---
+type PayoutToken = 'USDC' | 'SOL'
 
-interface RecipientInput {
+interface Recipient {
+  id: string
   name: string
-  walletAddress: string
+  address: string
   amount: string
-  memo: string
 }
 
-interface PayrollRecipient {
-  id: string
+interface ParsedCsvRow {
+  rowNumber: number
   name: string
-  walletAddress: string
-  amountAtomic: string | null
-  registrationStatus: string
+  address: string
+  amount: string
+  errors: string[]
 }
 
-interface PayrollGroup {
-  id: string
-  title: string
-  token: Token
-  status: string
-  releaseAt: string
-  totalAmountAtomic: string
-  recipients: PayrollRecipient[]
+// --- Helpers ---
+const isValidSolanaAddress = (address: string) => {
+  try { new PublicKey(address); return true; } catch { return false; }
 }
 
-const TOKEN_DECIMALS: Record<Token, number> = { USDC: 6, SOL: 9 }
+const normalizeAmount = (raw: string) => raw.replace(/[^\d.]/g, '')
 
-function emptyRecipient(): RecipientInput {
-  return { name: '', walletAddress: '', amount: '', memo: '' }
+const isValidAmount = (amount: string) => {
+  if (!/^\d*\.?\d+$/.test(amount)) return false
+  const num = parseFloat(amount)
+  return Number.isFinite(num) && num > 0
 }
 
-function defaultReleaseTime() {
-  const date = new Date(Date.now() + 24 * 60 * 60 * 1000)
-  date.setMinutes(0, 0, 0)
-  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16)
-}
-
-function toAtomicAmount(value: string, decimals: number): string | null {
-  if (!/^\d+(?:\.\d*)?$/.test(value)) return null
-  const [whole, fraction = ''] = value.split('.')
-  if (fraction.length > decimals) return null
-  const atomic = BigInt(whole) * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0')
-  return atomic > 0n ? atomic.toString() : null
-}
-
-function displayAmount(amountAtomic: string, decimals: number) {
-  const amount = BigInt(amountAtomic)
-  const scale = 10n ** BigInt(decimals)
-  const whole = (amount / scale).toLocaleString('en-US')
-  const fraction = (amount % scale).toString().padStart(decimals, '0').replace(/0+$/, '')
-  return `${whole}${fraction ? `.${fraction}` : ''}`
-}
-
-function formatRelease(value: string) {
-  const date = new Date(value)
-  return Number.isNaN(date.getTime())
-    ? 'Release date unavailable'
-    : date.toLocaleString('en-US', { dateStyle: 'medium', timeStyle: 'short' })
+const truncateAddress = (address: string) => {
+  if (address.length <= 14) return address
+  return `${address.slice(0, 6)}…${address.slice(-4)}`
 }
 
 export default function Payroll() {
-  const [groups, setGroups] = useState<PayrollGroup[]>([])
-  const [title, setTitle] = useState('')
-  const [token, setToken] = useState<Token>('USDC')
-  const [releaseAt, setReleaseAt] = useState(defaultReleaseTime)
-  const [recipients, setRecipients] = useState<RecipientInput[]>([emptyRecipient()])
-  const [loading, setLoading] = useState(true)
-  const [saving, setSaving] = useState(false)
+  const { publicKey, signTransaction } = useWallet()
+
+  // Local State
+  const [payrollDate, setPayrollDate] = useState('')
+  const [payrollTime, setPayrollTime] = useState('')
+  const [payrollToken, setPayrollToken] = useState<PayoutToken>('USDC')
+  const [recipients, setRecipients] = useState<Recipient[]>([
+    { id: crypto.randomUUID(), name: '', address: '', amount: '' }
+  ])
+
+  const [isLocking, setIsLocking] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState<string | null>(null)
 
-  const loadGroups = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      setGroups(await api<PayrollGroup[]>('/v1/payroll/groups'))
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not load payroll groups.')
-    } finally {
-      setLoading(false)
-    }
-  }, [])
+  // CSV State
+  const fileInputRef = useRef<HTMLInputElement>(null)
+  const [csvRows, setCsvRows] = useState<ParsedCsvRow[]>([])
+  const [csvFileName, setCsvFileName] = useState<string | null>(null)
 
-  useEffect(() => {
-    void loadGroups()
-  }, [loadGroups])
+  // Derived State
+  const total = useMemo(() => {
+    return recipients.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
+  }, [recipients])
+  const csvValidCount = csvRows.filter(r => r.errors.length === 0).length
 
-  function updateRecipient(index: number, field: keyof RecipientInput, value: string) {
-    setRecipients((current) =>
-      current.map((recipient, currentIndex) =>
-        currentIndex === index ? { ...recipient, [field]: value } : recipient,
-      ),
-    )
+  // --- Recipient Management ---
+  const addRecipient = () => {
+    setRecipients(prev => [...prev, { id: crypto.randomUUID(), name: '', address: '', amount: '' }])
   }
 
-  async function createPayroll(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault()
+  const updateRecipient = (id: string, field: keyof Recipient, value: string) => {
+    setRecipients(prev => prev.map(r => r.id === id ? { ...r, [field]: value } : r))
+  }
+
+  const removeRecipient = (id: string) => {
+    setRecipients(prev => prev.filter(r => r.id !== id))
+  }
+
+  // --- CSV Logic ---
+  const handleCsvParse = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+
+    Papa.parse<Record<string, string>>(file, {
+      header: true,
+      skipEmptyLines: true,
+      transformHeader: h => h.trim().toLowerCase(),
+      complete: (results) => {
+        const fields = results.meta.fields ?? []
+        const nameCol = fields.find(f => ['name', 'employee'].includes(f))
+        const addressCol = fields.find(f => ['address', 'wallet'].includes(f))
+        const amountCol = fields.find(f => ['amount', 'salary'].includes(f))
+
+        if (!nameCol || !addressCol || !amountCol) {
+          setError('CSV must contain Name, Wallet, and Amount columns.')
+          setCsvRows([])
+          e.target.value = ''
+          return
+        }
+
+        const rows: ParsedCsvRow[] = results.data
+          .filter(row => Object.values(row).some(v => (v ?? '').trim() !== ''))
+          .map((row, index) => {
+            const name = (row[nameCol] ?? '').trim()
+            const address = (row[addressCol] ?? '').trim()
+            const amount = normalizeAmount((row[amountCol] ?? '').trim())
+            const errors: string[] = []
+
+            if (!name) errors.push('Missing name')
+            if (!address) errors.push('Missing address')
+            else if (!isValidSolanaAddress(address)) errors.push('Invalid address')
+            if (!amount) errors.push('Missing amount')
+            else if (!isValidAmount(amount)) errors.push('Invalid amount')
+
+            return { rowNumber: index + 2, name, address, amount, errors }
+          })
+
+        setCsvRows(rows)
+        setCsvFileName(file.name)
+        e.target.value = ''
+      }
+    })
+  }
+
+  const handleImportCsv = () => {
+    const validRows = csvRows.filter(r => r.errors.length === 0)
+    const newRecipients = validRows.map(r => ({
+      id: crypto.randomUUID(),
+      name: r.name,
+      address: r.address,
+      amount: r.amount
+    }))
+
+    // Remove initial empty row if it's the only one
+    if (recipients.length === 1 && !recipients[0].name && !recipients[0].address) {
+      setRecipients(newRecipients)
+    } else {
+      setRecipients(prev => [...prev, ...newRecipients])
+    }
+
+    setCsvRows([])
+    setCsvFileName(null)
+  }
+
+  // --- Submission ---
+  const handleConfirm = async () => {
     setError(null)
-    setSuccess(null)
+    if (!publicKey || !signTransaction) { setError('Please connect your wallet to fund payroll.'); return }
+    if (!payrollDate || !payrollTime) { setError('Please set a release date and time.'); return }
 
-    if (!title.trim()) {
-      setError('Enter a name for this payroll group.')
-      return
-    }
-    if (!releaseAt || Number.isNaN(new Date(releaseAt).getTime())) {
-      setError('Choose a valid release date.')
-      return
-    }
-    if (recipients.length === 0) {
-      setError('Add at least one recipient.')
-      return
-    }
+    const filledRecipients = recipients.filter(r => r.name.trim() || r.address.trim() || parseFloat(r.amount) > 0)
+    if (filledRecipients.length === 0) { setError('Add at least one recipient.'); return }
 
-    const recipientPayload: { name: string; walletAddress: string; amountAtomic: string; memo?: string }[] = []
-    for (const [index, recipient] of recipients.entries()) {
-      if (!recipient.name.trim()) {
-        setError(`Enter a name for recipient ${index + 1}.`)
-        return
-      }
-      try {
-        new PublicKey(recipient.walletAddress.trim())
-      } catch {
-        setError(`Enter a valid Solana wallet address for ${recipient.name.trim()}.`)
-        return
-      }
-      const amountAtomic = toAtomicAmount(recipient.amount, TOKEN_DECIMALS[token])
-      if (!amountAtomic) {
-        setError(`Enter a positive ${token} amount for ${recipient.name.trim()} with up to ${TOKEN_DECIMALS[token]} decimal places.`)
-        return
-      }
-      recipientPayload.push({
-        name: recipient.name.trim(),
-        walletAddress: recipient.walletAddress.trim(),
-        amountAtomic,
-        ...(recipient.memo.trim() ? { memo: recipient.memo.trim() } : {}),
-      })
-    }
+    const invalid = filledRecipients.find(r => !r.name.trim() || !isValidSolanaAddress(r.address) || !(parseFloat(r.amount) > 0))
+    if (invalid) { setError('One or more recipients have invalid details.'); return }
 
-    setSaving(true)
+    setIsLocking(true)
     try {
-      const group = await api<PayrollGroup>('/v1/payroll/groups', {
+      const decimals = payrollToken === 'SOL' ? 9 : 6
+      const tokenStr = localStorage.getItem('veil_jwt')
+
+      // 1. Create Group
+      const createRes = await fetch('http://localhost:8000/v1/payroll/groups', {
         method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenStr}` },
         body: JSON.stringify({
           employerRef: `PAY-${Date.now()}`,
-          title: title.trim(),
-          token,
-          releaseAt: new Date(releaseAt).toISOString(),
-          confirmationWindowHours: 2,
-          autoProceedAfterConfirmationWindow: true,
-          registrationLinkOpen: false,
-          recipients: recipientPayload,
-        }),
+          title: `Payroll ${payrollDate}`,
+          token: payrollToken,
+          releaseAt: new Date(`${payrollDate}T${payrollTime}`).toISOString(),
+          recipients: filledRecipients.map(r => ({
+            name: r.name,
+            walletAddress: r.address,
+            amountAtomic: Math.round((parseFloat(r.amount) || 0) * 10 ** decimals).toString(),
+          }))
+        })
       })
-      setGroups((current) => [group, ...current])
-      setTitle('')
-      setRecipients([emptyRecipient()])
-      setSuccess(`“${group.title}” was created as a draft payroll group.`)
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not create this payroll group.')
+
+      if (!createRes.ok) throw new Error("Failed to create payroll group.")
+      const group = await createRes.json()
+
+      // 2. Mock Solana Signature (Replace this block with umbra.lockPayrollVault when ready)
+      console.log("Requesting signature from wallet...")
+      // const signature = await umbra.lockPayrollVault(group, { publicKey, signTransaction })
+      const signature = "mock_solana_signature_" + Date.now()
+
+      // 3. Confirm Lock with Backend
+      const lockRes = await fetch(`http://localhost:8000/v1/payroll/groups/${group.id}/lock`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenStr}` },
+        body: JSON.stringify({ vaultSignature: signature })
+      })
+
+      if (!lockRes.ok) throw new Error("Failed to lock vault.")
+
+      // Success Reset
+      setRecipients([{ id: crypto.randomUUID(), name: '', address: '', amount: '' }])
+      setPayrollDate('')
+      setPayrollTime('')
+      alert("Payroll successfully scheduled and funded!")
+
+    } catch (err: any) {
+      setError(err.message || 'An error occurred during payroll submission.')
     } finally {
-      setSaving(false)
+      setIsLocking(false)
     }
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8">
-      <header>
-        <h1 className="text-3xl font-semibold tracking-tight text-primary">Payroll</h1>
-        <p className="mt-1 text-sm text-foreground/70">
-          Create a scheduled payroll group and track its recipients.
-        </p>
+    <div className="mx-auto max-w-6xl space-y-8 p-4 pb-12 sm:p-8">
+
+      <header className="flex flex-col gap-1">
+        <h1 className="text-3xl font-bold tracking-tight text-primary">Run Payroll</h1>
+        <p className="text-foreground/70">Schedule and fund multiple payments in a single transaction.</p>
       </header>
 
       {error && (
-        <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>
-      )}
-      {success && (
-        <p role="status" className="rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">{success}</p>
-      )}
-
-      <form onSubmit={(event) => void createPayroll(event)} className="space-y-5 rounded-panel border border-primary/10 bg-white p-5 shadow-veil-sm sm:p-6">
-        <div className="flex items-start gap-3">
-          <div className="flex size-10 shrink-0 items-center justify-center rounded-card bg-primary/10 text-primary">
-            <UsersThree size={21} weight="fill" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">New payroll group</h2>
-            <p className="mt-0.5 text-sm text-foreground/60">Add recipient details and a planned release date.</p>
-          </div>
+        <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700">
+          <WarningCircle size={24} weight="fill" />
+          <span className="text-sm font-medium">{error}</span>
         </div>
+      )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div className="space-y-1.5">
-            <label htmlFor="payroll-title" className="text-sm font-medium">Payroll name</label>
-            <input
-              id="payroll-title"
-              required
-              maxLength={120}
-              value={title}
-              onChange={(event) => setTitle(event.target.value)}
-              placeholder="e.g. November payroll"
-              className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <label htmlFor="payroll-release" className="text-sm font-medium">Planned release</label>
-            <input
-              id="payroll-release"
-              required
-              type="datetime-local"
-              min={defaultReleaseTime()}
-              value={releaseAt}
-              onChange={(event) => setReleaseAt(event.target.value)}
-              className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 text-sm outline-none focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-            />
-          </div>
-        </div>
+      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
 
-        <fieldset className="space-y-1.5">
-          <legend className="text-sm font-medium">Currency</legend>
-          <div className="flex h-11 max-w-xs rounded-card bg-primary/5 p-1">
-            {(['USDC', 'SOL'] as const).map((option) => (
-              <button
-                key={option}
-                type="button"
-                aria-pressed={token === option}
-                onClick={() => setToken(option)}
-                className={`flex-1 rounded-md text-sm font-medium transition-colors ${
-                  token === option ? 'bg-white text-primary shadow-veil-sm' : 'text-foreground/60 hover:text-foreground'
-                }`}
-              >
-                {option}
-              </button>
-            ))}
-          </div>
-        </fieldset>
+        {/* --- LEFT COLUMN (Config & Recipients) --- */}
+        <div className="col-span-1 space-y-6 lg:col-span-2">
 
-        <div className="space-y-3">
-          <div className="flex items-center justify-between gap-3">
-            <h3 className="text-sm font-semibold">Recipients</h3>
-            <Button
-              variant="secondary"
-              size="sm"
-              leftIcon={<Plus size={16} weight="bold" />}
-              onClick={() => setRecipients((current) => [...current, emptyRecipient()])}
-            >
-              Add recipient
+          {/* Settings Card */}
+          <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
+              <CalendarBlank size={20} /> Schedule & Currency
+            </h2>
+
+            <div className="grid grid-cols-1 gap-5 sm:grid-cols-3">
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-foreground/70">Payout Token</label>
+                <div className="flex h-10 items-center rounded-lg bg-primary/5 p-1">
+                  {(['USDC', 'SOL'] as PayoutToken[]).map((t) => (
+                    <button
+                      key={t}
+                      onClick={() => setPayrollToken(t)}
+                      className={`flex-1 rounded-md text-sm font-medium transition-colors ${
+                        payrollToken === t ? 'bg-white text-primary shadow-sm' : 'text-foreground/60 hover:text-foreground'
+                      }`}
+                    >
+                      {t}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-foreground/70">Release Date</label>
+                <input
+                  type="date"
+                  value={payrollDate}
+                  onChange={(e) => setPayrollDate(e.target.value)}
+                  className="h-10 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+              </div>
+              <div className="flex flex-col gap-1.5">
+                <label className="text-sm font-medium text-foreground/70">Time (Local)</label>
+                <input
+                  type="time"
+                  value={payrollTime}
+                  onChange={(e) => setPayrollTime(e.target.value)}
+                  className="h-10 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* Recipients Card */}
+          <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <div className="mb-4 flex items-center justify-between">
+              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
+                <Users size={20} /> Team Members
+              </h2>
+
+              <div className="flex gap-2">
+                <input ref={fileInputRef} type="file" accept=".csv" onChange={handleCsvParse} className="hidden" />
+                <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} leftIcon={<UploadSimple size={16} />}>
+                  Import CSV
+                </Button>
+              </div>
+            </div>
+
+            {/* CSV Preview */}
+            {csvRows.length > 0 && (
+              <div className="mb-6 overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+                <div className="flex items-center justify-between border-b border-emerald-500/10 p-3 px-4">
+                  <div className="flex flex-col">
+                    <span className="text-sm font-semibold text-emerald-800">{csvFileName}</span>
+                    <span className="text-xs text-emerald-600/80">{csvValidCount} ready to import</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <button onClick={() => { setCsvRows([]); setCsvFileName(null) }} className="text-xs font-medium text-emerald-700 hover:underline">Cancel</button>
+                    <Button size="sm" onClick={handleImportCsv} disabled={csvValidCount === 0} className="bg-emerald-600 hover:bg-emerald-700">
+                      Import
+                    </Button>
+                  </div>
+                </div>
+                <div className="max-h-40 overflow-y-auto p-2">
+                  {csvRows.map(row => (
+                    <div key={row.rowNumber} className="flex items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
+                      {row.errors.length ? <WarningCircle className="text-red-500" /> : <CheckCircle className="text-emerald-500" />}
+                      <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
+                      <span className="flex-1 text-right text-emerald-800 font-mono text-xs">{row.amount}</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Manual Entry List */}
+            <div className="space-y-3">
+              {recipients.map((recipient, index) => (
+                <div key={recipient.id} className="flex flex-col gap-2 rounded-xl bg-primary/[0.02] p-2 sm:flex-row sm:items-center">
+                  <div className="hidden h-10 w-8 items-center justify-center font-mono text-xs font-semibold text-primary/40 sm:flex">
+                    {index + 1}
+                  </div>
+                  <input
+                    type="text"
+                    placeholder="Full Name"
+                    value={recipient.name}
+                    onChange={(e) => updateRecipient(recipient.id, 'name', e.target.value)}
+                    className="h-10 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                  <input
+                    type="text"
+                    placeholder="Solana Wallet Address"
+                    value={recipient.address}
+                    onChange={(e) => updateRecipient(recipient.id, 'address', e.target.value)}
+                    className="h-10 flex-[1.5] rounded-lg border border-primary/10 bg-white px-3 text-sm font-mono focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                  <div className="flex flex-1 items-center gap-2">
+                    <input
+                      type="text"
+                      placeholder="Amount"
+                      value={recipient.amount}
+                      onChange={(e) => updateRecipient(recipient.id, 'amount', e.target.value)}
+                      className="h-10 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                    />
+                    <button
+                      onClick={() => removeRecipient(recipient.id)}
+                      className="flex h-10 w-10 items-center justify-center rounded-lg text-foreground/40 hover:bg-red-50 hover:text-red-500 transition-colors"
+                    >
+                      <Trash size={18} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <Button variant="secondary" size="md" className="mt-4 border-dashed" fullWidth onClick={addRecipient} leftIcon={<Plus size={16} />}>
+              Add another recipient
             </Button>
-          </div>
 
-          {recipients.map((recipient, index) => (
-            <fieldset key={index} className="grid gap-3 rounded-card border border-primary/10 bg-background/70 p-4 sm:grid-cols-2 lg:grid-cols-[1fr_1.5fr_0.8fr_1fr_auto]">
-              <legend className="sr-only">Recipient {index + 1}</legend>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-foreground/65">Name</span>
-                <input
-                  required
-                  value={recipient.name}
-                  onChange={(event) => updateRecipient(index, 'name', event.target.value)}
-                  placeholder="Employee name"
-                  className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 text-sm outline-none focus:border-primary/40"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-foreground/65">Solana wallet</span>
-                <input
-                  required
-                  value={recipient.walletAddress}
-                  onChange={(event) => updateRecipient(index, 'walletAddress', event.target.value)}
-                  placeholder="Wallet address"
-                  className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 font-mono text-xs outline-none focus:border-primary/40"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-foreground/65">Amount ({token})</span>
-                <input
-                  required
-                  type="number"
-                  min="0"
-                  step="any"
-                  inputMode="decimal"
-                  value={recipient.amount}
-                  onChange={(event) => updateRecipient(index, 'amount', event.target.value)}
-                  placeholder="0.00"
-                  className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 font-mono text-sm outline-none focus:border-primary/40"
-                />
-              </label>
-              <label className="space-y-1">
-                <span className="text-xs font-medium text-foreground/65">Note <span className="font-normal">(optional)</span></span>
-                <input
-                  value={recipient.memo}
-                  onChange={(event) => updateRecipient(index, 'memo', event.target.value)}
-                  placeholder="Reference"
-                  className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 text-sm outline-none focus:border-primary/40"
-                />
-              </label>
-              <button
-                type="button"
-                aria-label={`Remove recipient ${index + 1}`}
-                disabled={recipients.length === 1}
-                onClick={() => setRecipients((current) => current.filter((_, currentIndex) => currentIndex !== index))}
-                className="self-end rounded-card px-3 py-2 text-sm text-foreground/55 hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-accent disabled:invisible"
-              >
-                Remove
-              </button>
-            </fieldset>
-          ))}
+          </section>
         </div>
 
-        <div className="flex flex-col justify-between gap-4 border-t border-primary/10 pt-5 sm:flex-row sm:items-center">
-          <p className="max-w-xl text-xs leading-relaxed text-foreground/55">
-            This creates a draft group. Funding the vault and releasing payments on-chain are not available in this frontend yet.
-          </p>
-          <Button type="submit" size="lg" loading={saving} className="shrink-0">
-            Create payroll group
-          </Button>
-        </div>
-      </form>
+        {/* --- RIGHT COLUMN (Checkout / Summary) --- */}
+        <div className="col-span-1">
+          <div className="sticky top-24 space-y-4 rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <h3 className="text-lg font-semibold tracking-tight text-primary">Summary</h3>
 
-      <section className="space-y-4">
-        <div className="flex items-center justify-between gap-3">
-          <h2 className="text-xl font-semibold tracking-tight">Your payroll groups</h2>
-          <Button variant="secondary" size="sm" loading={loading} onClick={() => void loadGroups()}>
-            Refresh
-          </Button>
-        </div>
+            <div className="flex flex-col gap-3 py-4 text-sm text-foreground/70">
+              <div className="flex justify-between">
+                <span>Total Recipients</span>
+                <span className="font-medium text-foreground">{recipients.filter(r => r.name || r.amount).length}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Release Date</span>
+                <span className="font-medium text-foreground">{payrollDate ? payrollDate : 'Not set'}</span>
+              </div>
+              <div className="flex justify-between">
+                <span>Privacy</span>
+                <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-100">Private</span>
+              </div>
+            </div>
 
-        {loading && groups.length === 0 ? (
-          <div className="flex min-h-32 items-center justify-center" role="status" aria-label="Loading payroll groups">
-            <div className="size-7 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
-          </div>
-        ) : groups.length === 0 ? (
-          <div className="rounded-panel border border-dashed border-primary/20 bg-white/60 p-8 text-center">
-            <p className="font-medium">No payroll groups yet</p>
-            <p className="mt-1 text-sm text-foreground/60">Create a group above to get started.</p>
-          </div>
-        ) : (
-          <div className="grid gap-4 lg:grid-cols-2">
-            {groups.map((group) => (
-              <article key={group.id} className="rounded-panel border border-primary/10 bg-white p-5 shadow-veil-sm">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="min-w-0">
-                    <h3 className="truncate font-semibold">{group.title}</h3>
-                    <p className="mt-1 text-sm text-foreground/60">{formatRelease(group.releaseAt)}</p>
-                  </div>
-                  <span className="shrink-0 rounded-pill bg-primary/5 px-3 py-1 text-xs font-medium capitalize text-primary">
-                    {group.status}
-                  </span>
+            <div className="border-t border-primary/10 pt-4">
+              <div className="flex items-end justify-between">
+                <span className="text-sm font-medium text-foreground/70">Total Funding</span>
+                <div className="text-right">
+                  <div className="text-3xl font-bold tracking-tight text-primary">{total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
+                  <div className="text-sm font-semibold text-primary/60">{payrollToken}</div>
                 </div>
-                <div className="mt-5 flex items-end justify-between border-t border-primary/5 pt-4">
-                  <div>
-                    <p className="text-xs text-foreground/55">Recipients</p>
-                    <p className="mt-1 font-medium">{group.recipients.length}</p>
-                  </div>
-                  <p className="text-right font-semibold text-primary">
-                    {displayAmount(group.totalAmountAtomic || '0', TOKEN_DECIMALS[group.token])} {group.token}
-                  </p>
-                </div>
-              </article>
-            ))}
+              </div>
+            </div>
+
+            <Button
+              size="lg"
+              fullWidth
+              onClick={handleConfirm}
+              loading={isLocking}
+              className="mt-6 h-14 text-base shadow-lg shadow-primary/20"
+              leftIcon={<LockKey size={20} weight="bold" />}
+            >
+              Schedule & Fund Payroll
+            </Button>
+
+            <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
+              Funds will be securely locked in a smart contract vault and automatically disbursed at the scheduled time.
+            </p>
           </div>
-        )}
-      </section>
+        </div>
+
+      </div>
     </div>
   )
 }
