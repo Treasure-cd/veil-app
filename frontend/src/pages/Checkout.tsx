@@ -221,7 +221,7 @@ export default function Checkout() {
 
   if (loading) {
     return (
-      <main className="flex min-h-dvh items-center justify-center bg-background" role="status" aria-label="Loading checkout">
+      <main className="flex min-h-[calc(100dvh-4rem)] items-center justify-center bg-background" role="status" aria-label="Loading checkout">
         <div className="size-8 animate-spin rounded-full border-4 border-primary/20 border-t-primary" />
       </main>
     )
@@ -358,7 +358,7 @@ export default function Checkout() {
 
 function CheckoutFrame({ children }: { children: ReactNode }) {
   return (
-    <main className="flex min-h-dvh items-center justify-center bg-background px-4 py-10">
+    <main className="flex min-h-[calc(100dvh-4rem)] items-center justify-center bg-background px-4 py-10">
       <section className="w-full max-w-md rounded-panel border border-primary/10 bg-white p-6 text-center shadow-veil-md sm:p-8">
         {children}
       </section>

@@ -15,13 +15,13 @@ function App() {
       <MotionConfig reducedMotion="user">
         <Routes>
           <Route element={<AppLayout />}>
-            <Route path="/" element={<Landing />} />
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/settings" element={<Settings />} />
+            <Route path="/" element={<Landing />} />
+            <Route path="/pay/:id" element={<Checkout />} />
           </Route>
-          <Route path="/pay/:id" element={<Checkout />} />
         </Routes>
       </MotionConfig>
     </AppProviders>
