@@ -6,19 +6,19 @@ from sqlmodel import select
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Optional, List
+from core.config import settings
 from core.session import get_session
 from app.routers.dependencies import get_current_user
 from app.models.user import User
 from app.models.payroll import PayrollGroup, PayrollLink
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
+from solders.transaction_status import TransactionConfirmationStatus
 
 router = APIRouter(
     prefix="/payroll",
     tags=["payroll"],
 )
-
-SOLANA_RPC_URL = "https://api.devnet.solana.com"
 
 # --- Models ---
 class AddRecipientRequest(BaseModel):
@@ -52,10 +52,22 @@ class SubmitDetailsRequest(BaseModel):
 async def verify_solana_transaction(signature_str: str) -> bool:
     try:
         sig = Signature.from_string(signature_str)
-        async with AsyncClient(SOLANA_RPC_URL) as client:
-            response = await client.get_signature_statuses([sig])
-            if not response.value or not response.value[0]: return False
-            return response.value[0].err is None
+        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
+            response = await client.get_signature_statuses(
+                [sig],
+                search_transaction_history=True,
+            )
+            if not response.value or not response.value[0]:
+                return False
+            transaction_status = response.value[0]
+            return (
+                transaction_status.err is None
+                and transaction_status.confirmation_status
+                in (
+                    TransactionConfirmationStatus.Confirmed,
+                    TransactionConfirmationStatus.Finalized,
+                )
+            )
     except Exception:
         return False
 

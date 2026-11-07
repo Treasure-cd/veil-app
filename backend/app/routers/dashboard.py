@@ -149,6 +149,7 @@ async def get_dashboard(
         select(PaymentIntent).where(
             PaymentIntent.user_id == uid,
             PaymentIntent.status == "funded",
+            PaymentIntent.receive_mode == "private",
         )
     )).scalars().all()
 

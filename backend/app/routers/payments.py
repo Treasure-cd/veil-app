@@ -3,20 +3,23 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from uuid import UUID
+from datetime import datetime, timezone
 from typing import Optional, Literal
+from core.config import settings
 from core.session import get_session
-from app.routers.dependencies import get_current_user
+from app.routers.dependencies import get_current_user, get_optional_user
 from app.models.user import User
 from app.models.payment import PaymentIntent, utc_now
 from solana.rpc.async_api import AsyncClient
+from solana.rpc.commitment import Confirmed
+from solders.pubkey import Pubkey
 from solders.signature import Signature
+from solders.transaction_status import TransactionConfirmationStatus
 
 router = APIRouter(
     prefix="/payments",
     tags=["payments"],
 )
-
-SOLANA_RPC_URL = "https://api.devnet.solana.com"
 
 # 1. ADDED BASIC VALIDATION
 class CreatePaymentIntentRequest(BaseModel):
@@ -26,6 +29,15 @@ class CreatePaymentIntentRequest(BaseModel):
     recipientAddress: str
     receiveMode: Literal["private", "public"] = "private"
     memo: Optional[str] = None
+
+    @field_validator("mint", "recipientAddress")
+    @classmethod
+    def validate_pubkey(cls, v: str):
+        try:
+            Pubkey.from_string(v)
+        except ValueError as exc:
+            raise ValueError("Invalid Solana address") from exc
+        return v
 
     @field_validator("amountAtomic")
     @classmethod
@@ -39,6 +51,12 @@ class ConfirmFundRequest(BaseModel):
 
 class ConfirmClaimRequest(BaseModel):
     signature: str = Field(min_length=64, max_length=100)
+
+def parse_uuid(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="Invalid intent ID") from exc
 
 def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
     # 2. TRIM DATA FOR NON-OWNERS (Privacy)
@@ -68,10 +86,67 @@ async def verify_solana_transaction(signature_str: str) -> bool:
     """Verifies that a transaction was successful on the blockchain."""
     try:
         sig = Signature.from_string(signature_str)
-        async with AsyncClient(SOLANA_RPC_URL) as client:
-            response = await client.get_signature_statuses([sig])
-            if not response.value or not response.value[0]: return False
-            return response.value[0].err is None
+        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
+            response = await client.get_signature_statuses(
+                [sig],
+                search_transaction_history=True,
+            )
+            if not response.value or not response.value[0]:
+                return False
+            transaction_status = response.value[0]
+            return (
+                transaction_status.err is None
+                and transaction_status.confirmation_status
+                in (
+                    TransactionConfirmationStatus.Confirmed,
+                    TransactionConfirmationStatus.Finalized,
+                )
+            )
+    except Exception:
+        return False
+
+async def verify_transfer(
+    signature_str: str,
+    mint: str,
+    address: str,
+    amount_atomic: str,
+    after: datetime,
+    direction: Literal["in", "out"] = "in",
+) -> bool:
+    try:
+        sig = Signature.from_string(signature_str)
+        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
+            response = await client.get_transaction(
+                sig,
+                encoding="jsonParsed",
+                commitment=Confirmed,
+                max_supported_transaction_version=0,
+            )
+        tx = response.value
+        if tx is None or tx.transaction.meta is None:
+            return False
+        meta = tx.transaction.meta
+        if meta.err is not None:
+            return False
+
+        after_utc = (
+            after.replace(tzinfo=timezone.utc)
+            if after.tzinfo is None
+            else after.astimezone(timezone.utc)
+        )
+        created_ts = after_utc.timestamp()
+        if tx.block_time is None or tx.block_time < created_ts:
+            return False
+
+        def balance(entries) -> int:
+            total = 0
+            for entry in entries or []:
+                if str(entry.mint) == mint and str(entry.owner) == address:
+                    total += int(entry.ui_token_amount.amount)
+            return total
+
+        delta = balance(meta.post_token_balances) - balance(meta.pre_token_balances)
+        return delta >= int(amount_atomic) if direction == "in" else -delta >= int(amount_atomic)
     except Exception:
         return False
 
@@ -99,13 +174,10 @@ async def create_intent(
 @router.get("/intents/{intent_id}")
 async def get_intent(
     intent_id: str,
-    current_user: Optional[User] = Depends(get_current_user), # Can be called by anyone (e.g., a customer viewing a checkout page)
+    current_user: Optional[User] = Depends(get_optional_user), # Can be called by anyone (e.g., a customer viewing a checkout page)
     db: AsyncSession = Depends(get_session)
 ):
-    try:
-        uuid_id = UUID(intent_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail="Invalid intent ID")
+    uuid_id = parse_uuid(intent_id)
 
     stmt = select(PaymentIntent).where(PaymentIntent.id == uuid_id)
     res = await db.execute(stmt)
@@ -125,8 +197,12 @@ async def confirm_fund(
     db: AsyncSession = Depends(get_session)
     # Note: A customer might call this, so we don't strictly require `current_user` to be the merchant here.
 ):
-    uuid_id = UUID(intent_id)
-    stmt = select(PaymentIntent).where(PaymentIntent.id == uuid_id)
+    uuid_id = parse_uuid(intent_id)
+    stmt = (
+        select(PaymentIntent)
+        .where(PaymentIntent.id == uuid_id)
+        .with_for_update()
+    )
     res = await db.execute(stmt)
     intent = res.scalars().first()
 
@@ -137,8 +213,22 @@ async def confirm_fund(
     if intent.status != "created":
         raise HTTPException(status_code=409, detail="Payment has already been funded or claimed.")
 
+    duplicate = await db.execute(
+        select(PaymentIntent.id).where(
+            PaymentIntent.fund_signature == req.signature
+        )
+    )
+    if duplicate.first():
+        raise HTTPException(status_code=409, detail="Signature already used")
+
     # 4. BLOCKCHAIN VERIFICATION
-    is_valid_tx = await verify_solana_transaction(req.signature)
+    is_valid_tx = await verify_transfer(
+        req.signature,
+        intent.mint,
+        intent.recipient_address,
+        intent.amount_atomic,
+        intent.created_at,
+    )
     if not is_valid_tx:
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
@@ -158,8 +248,12 @@ async def confirm_claim(
     current_user: User = Depends(get_current_user), # MUST BE LOGGED IN
     db: AsyncSession = Depends(get_session)
 ):
-    uuid_id = UUID(intent_id)
-    stmt = select(PaymentIntent).where(PaymentIntent.id == uuid_id)
+    uuid_id = parse_uuid(intent_id)
+    stmt = (
+        select(PaymentIntent)
+        .where(PaymentIntent.id == uuid_id)
+        .with_for_update()
+    )
     res = await db.execute(stmt)
     intent = res.scalars().first()
 
@@ -170,6 +264,33 @@ async def confirm_claim(
     # 6. STATE MACHINE CHECK: Can only claim if it's currently funded
     if intent.status != "funded":
         raise HTTPException(status_code=409, detail="Can only claim a funded payment.")
+
+    if intent.receive_mode != "private":
+        raise HTTPException(
+            status_code=409,
+            detail="Public payments are settled once funded.",
+        )
+
+    duplicate = await db.execute(
+        select(PaymentIntent.id).where(
+            PaymentIntent.claim_signature == req.signature
+        )
+    )
+    if duplicate.first():
+        raise HTTPException(status_code=409, detail="Signature already used")
+
+    if not await verify_transfer(
+        req.signature,
+        intent.mint,
+        intent.recipient_address,
+        intent.amount_atomic,
+        intent.updated_at,
+        direction="out",
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="Claim transaction not verified on-chain.",
+        )
 
     intent.status = "claimed"
     intent.claim_signature = req.signature

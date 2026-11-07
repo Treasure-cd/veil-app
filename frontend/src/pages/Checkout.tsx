@@ -11,6 +11,7 @@ import { CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } 
 import { useParams } from 'react-router'
 import { truncateAddress } from '../lib/format'
 import { api } from '../services/api'
+import { useAuth } from '../auth/useAuth'
 import { Button } from '../components/ui/Button'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -22,6 +23,7 @@ const TOKENS: Record<string, { symbol: string; decimals: number; native?: boolea
 
 interface InvoiceData {
   id: string
+  userId?: string
   merchantRef: string
   mint: string
   amountAtomic: string
@@ -107,12 +109,16 @@ export default function Checkout() {
     connect,
     sendTransaction,
   } = useWallet()
+  const { user } = useAuth()
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null)
   const [loading, setLoading] = useState(true)
   const [paying, setPaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [claimSignature, setClaimSignature] = useState('')
+  const [claimError, setClaimError] = useState<string | null>(null)
+  const [claiming, setClaiming] = useState(false)
   const [pendingSignature, setPendingSignature] = useState<string | null>(null)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
@@ -219,6 +225,24 @@ export default function Checkout() {
     }
   }
 
+  async function handleClaim() {
+    if (!invoice || !claimSignature.trim()) return
+    setClaimError(null)
+    setClaiming(true)
+    try {
+      const updatedInvoice = await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-claim`, {
+        method: 'POST',
+        body: JSON.stringify({ signature: claimSignature.trim() }),
+      })
+      setInvoice(updatedInvoice)
+      setClaimSignature('')
+    } catch (err) {
+      setClaimError(err instanceof Error ? err.message : 'Could not verify the withdrawal transaction.')
+    } finally {
+      setClaiming(false)
+    }
+  }
+
   if (loading) {
     return (
       <main className="flex min-h-[calc(100dvh-4rem)] items-center justify-center bg-background" role="status" aria-label="Loading checkout">
@@ -252,7 +276,12 @@ export default function Checkout() {
 
   const displayAmount = formatAmount(invoice.amountAtomic, token.decimals)
 
-  if (invoice.status === 'funded' || invoice.status === 'claimed') {
+  const isOwner = user !== null && invoice.userId === user.id
+
+  if (
+    invoice.status === 'claimed' ||
+    (invoice.status === 'funded' && invoice.receiveMode !== 'private')
+  ) {
     return (
       <CheckoutFrame>
         <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
@@ -265,6 +294,58 @@ export default function Checkout() {
         <p className="mt-6 rounded-card bg-background px-4 py-3 text-xs text-foreground/55">
           This payment was made with a standard on-chain transfer. You can safely close this page.
         </p>
+      </CheckoutFrame>
+    )
+  }
+
+  if (invoice.status === 'funded' && invoice.receiveMode === 'private') {
+    return (
+      <CheckoutFrame>
+        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+          <CheckCircle size={36} weight="fill" />
+        </div>
+        <h1 className="mt-5 text-2xl font-semibold tracking-tight text-primary">
+          Private payment received
+        </h1>
+        <p className="mt-2 text-sm text-foreground/65">
+          {displayAmount} {token.symbol} is awaiting withdrawal from the private receiving address.
+        </p>
+        {isOwner ? (
+          <div className="mt-6 space-y-3 text-left">
+            <label htmlFor="claim-signature" className="block text-sm font-medium text-primary">
+              Withdrawal transaction signature
+            </label>
+            <input
+              id="claim-signature"
+              type="text"
+              value={claimSignature}
+              onChange={(event) => setClaimSignature(event.target.value)}
+              placeholder="Paste the confirmed transaction signature"
+              className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 font-mono text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+            />
+            {claimError && (
+              <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">
+                {claimError}
+              </p>
+            )}
+            <Button
+              fullWidth
+              loading={claiming}
+              disabled={!claimSignature.trim()}
+              onClick={() => void handleClaim()}
+            >
+              Confirm claim
+            </Button>
+            <p className="text-xs leading-relaxed text-foreground/55">
+              Withdraw the funds to your main wallet first. Veil verifies that this transaction moved
+              the requested token amount out of the private address.
+            </p>
+          </div>
+        ) : (
+          <p className="mt-6 rounded-card bg-background px-4 py-3 text-xs text-foreground/55">
+            The merchant must withdraw the funds from the private receiving address to complete settlement.
+          </p>
+        )}
       </CheckoutFrame>
     )
   }
@@ -299,7 +380,7 @@ export default function Checkout() {
             : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
           <p>
             This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
-            {invoice.receiveMode === 'private' && ' The original request selected private settlement, which is not supported yet.'}
+            {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
           </p>
         </div>
       </div>

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
 
     PORT: int = Field(default=8000)
     DATABASE_URL_DEV: str = Field(...)
+    SOLANA_RPC_URL: str = Field(default="https://api.devnet.solana.com")
     
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173")
     
