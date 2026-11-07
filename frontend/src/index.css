@@ -10,6 +10,7 @@
   --color-secondary: #2e0042;
   --color-accent: #4806fe;
 
+  --radius-tiny: 8px;
   --radius-card: 0.75rem;
   --radius-panel: 1.25rem;
   --radius-pill: 9999px;

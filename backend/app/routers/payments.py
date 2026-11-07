@@ -3,12 +3,11 @@ from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from uuid import UUID
-from datetime import datetime, timezone
 from typing import Optional, Literal
 from core.session import get_session
 from app.routers.dependencies import get_current_user
 from app.models.user import User
-from app.models.payment import PaymentIntent
+from app.models.payment import PaymentIntent, utc_now
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
 
@@ -145,7 +144,7 @@ async def confirm_fund(
 
     intent.status = "funded"
     intent.fund_signature = req.signature
-    intent.updated_at = datetime.now(timezone.utc)
+    intent.updated_at = utc_now()
 
     db.add(intent)
     await db.commit()
@@ -174,7 +173,7 @@ async def confirm_claim(
 
     intent.status = "claimed"
     intent.claim_signature = req.signature
-    intent.updated_at = datetime.now(timezone.utc)
+    intent.updated_at = utc_now()
 
     db.add(intent)
     await db.commit()

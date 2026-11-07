@@ -13,7 +13,7 @@ export function BottomNav() {
           <li key={to}>
             <NavLink
               to={to}
-              end={to === '/'}
+              end={to === '/app'}
               className={({ isActive }) =>
                 [
                   'flex flex-col items-center gap-1 py-2.5 text-xs font-medium transition-colors',

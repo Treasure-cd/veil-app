@@ -12,7 +12,7 @@ export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
 }
 
 const base =
-  'inline-flex select-none items-center justify-center gap-2 rounded-card font-medium transition-colors ' +
+  'inline-flex select-none items-center justify-center gap-2 rounded-sm font-medium transition-colors ' +
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 const variants: Record<Variant, string> = {

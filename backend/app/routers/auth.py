@@ -9,7 +9,7 @@ import nacl.signing
 import jwt
 from core.session import get_session
 from core.config import settings
-from app.models.user import User
+from app.models.user import User, utc_now
 
 router = APIRouter(
     prefix="/auth",
@@ -43,8 +43,8 @@ def create_jwt_token(user_id: str, address: str) -> str:
     payload = {
         "sub": user_id,
         "address": address,
-        "exp": (now + timedelta(days=7)).timestamp(),
-        "iat": now.timestamp()
+        "exp": int((now + timedelta(days=7)).timestamp()),
+        "iat": int(now.timestamp())
     }
     return jwt.encode(payload, settings.JWT_SECRET, algorithm="HS256")
 
@@ -58,7 +58,7 @@ async def request_challenge(
     user = res.scalars().first()
 
     nonce = str(uuid4())
-    expiry = datetime.now(timezone.utc) + timedelta(minutes=5)
+    expiry = utc_now() + timedelta(minutes=5)
 
     if not user:
         user = User(
@@ -71,7 +71,7 @@ async def request_challenge(
     else:
         user.nonce = nonce
         user.nonce_expires_at = expiry
-        user.updated_at = datetime.now(timezone.utc)
+        user.updated_at = utc_now()
         db.add(user)
 
     await db.commit()
@@ -86,18 +86,14 @@ async def login(
     res = await db.execute(stmt)
     user = res.scalars().first()
 
-    if not user or not user.nonce:
+    if not user or not user.nonce or not user.nonce_expires_at:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Challenge not initiated"
         )
 
-    now = datetime.now(timezone.utc)
-    # Make sure to make user.nonce_expires_at timezone aware if Postgres returns it naive
-    if user.nonce_expires_at.tzinfo is None:
-        user.nonce_expires_at = user.nonce_expires_at.replace(tzinfo=timezone.utc)
-
-    if not user.nonce_expires_at or now > user.nonce_expires_at:
+    now = utc_now()
+    if now > user.nonce_expires_at:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Authentication challenge expired. Request a new one."
@@ -123,7 +119,7 @@ async def login(
     # Clear nonce on successful login
     user.nonce = None
     user.nonce_expires_at = None
-    user.updated_at = datetime.now(timezone.utc)
+    user.updated_at = utc_now()
     db.add(user)
     await db.commit()
 

@@ -73,7 +73,7 @@ export default function CTA() {
           >
             <Link
               to="/app"
-              className="inline-flex h-14 items-center gap-2 rounded-full bg-white px-9 text-sm font-semibold text-secondary shadow-[0_0_60px_rgba(255,255,255,0.25)]"
+              className="inline-flex h-14 items-center gap-2 rounded-lg bg-white px-9 text-sm font-semibold text-secondary shadow-[0_0_60px_rgba(255,255,255,0.25)]"
             >
               Launch App
               <ArrowRight weight="bold" size={16} />

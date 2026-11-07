@@ -51,7 +51,7 @@ function PayVisual() {
             animate={{ scale: [1, 1.25], opacity: [0.6, 0] }}
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
           />
-          <div className="relative rounded-full bg-primary py-2 text-center text-xs font-medium text-white">
+          <div className="relative rounded-lg bg-primary py-2 px-2 text-center text-xs font-medium text-white">
             Approve Transaction
           </div>
         </div>

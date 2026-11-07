@@ -14,7 +14,7 @@ export function Sidebar() {
           <NavLink
             key={to}
             to={to}
-            end={to === '/'}
+            end={to === '/app'}
             className={({ isActive }) =>
               [
                 'relative flex h-10 items-center gap-3 rounded-card px-3 text-sm font-semibold transition-colors',

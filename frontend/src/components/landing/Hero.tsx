@@ -15,8 +15,7 @@ const word = {
 
 export default function Hero() {
   return (
-    // Added a subtle background grid to make the floating glows look more grounded and technical
-    <section className="relative flex min-h-screen items-center overflow-hidden pt-24 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]">
+    <section className="relative flex min-h-screen items-center overflow-hidden pt-24">
       {/* glows */}
       <motion.div
         aria-hidden
@@ -74,7 +73,7 @@ export default function Hero() {
             <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
               <Link
                 to="/app"
-                className="text-bold inline-flex h-12 items-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+                className="text-bold inline-flex h-12 items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
               >
                 Launch App
                 <ArrowRight weight="bold" size={16} />
@@ -86,8 +85,7 @@ export default function Hero() {
               whileTap={{ scale: 0.97 }}
               className="inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
             >
-              <PlayCircle weight="fill" size={20} className="text-primary/70" />
-              Watch the demo
+              See how it works
             </motion.a>
           </motion.div>
         </div>

@@ -16,7 +16,7 @@ function App() {
         <Route path="/" element={<Landing />} />
         <Route element={<AppProviders />}>
           <Route element={<AppLayout />}>
-            <Route path="/dashboard" element={<Dashboard />} />
+            <Route path="/app" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/settings" element={<Settings />} />

@@ -75,7 +75,7 @@ export default function PayrollSpotlight() {
           <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} className="w-fit">
             <Link
               to="/app"
-              className="inline-flex h-12 items-center rounded-full bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+              className="inline-flex h-12 items-center rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
             >
               Schedule a payout
             </Link>

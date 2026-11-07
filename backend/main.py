@@ -6,7 +6,7 @@ from loguru import logger
 from core.config import settings
 from app import models
 from core.session import engine
-from app.routers import webhook, auth, payments, payroll
+from app.routers import webhook, auth, payments, payroll, dashboard
 from core.session import engine
 
 
@@ -43,6 +43,7 @@ app.include_router(webhook.router, prefix="/v1")
 app.include_router(auth.router, prefix="/v1")
 app.include_router(payments.router, prefix="/v1")
 app.include_router(payroll.router, prefix="/v1")
+app.include_router(dashboard.router, prefix="/v1")
 
 @app.get("/")
 async def root():
