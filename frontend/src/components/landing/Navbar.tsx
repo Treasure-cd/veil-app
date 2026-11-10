@@ -49,14 +49,12 @@ export default function Navbar() {
           ))}
         </ul>
 
-        <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
-          <Link
-            to="/app"
-            className="inline-flex h-10 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white shadow-[0_4px_16px_rgba(92,4,159,0.35)]"
-          >
-            Open app
-          </Link>
-        </motion.div>
+        <div
+          aria-disabled="true"
+          className="inline-flex h-10 cursor-default items-center rounded-lg bg-primary px-5 text-sm font-medium text-white opacity-60 shadow-[0_4px_16px_rgba(92,4,159,0.35)]"
+        >
+          Coming soon
+        </div>
       </motion.nav>
     </div>
   )

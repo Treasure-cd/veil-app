@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { Link } from 'react-router'
 import { motion, AnimatePresence } from 'framer-motion'
 import { CheckCircle, Lock } from '@phosphor-icons/react'
 
@@ -72,13 +71,13 @@ export default function PayrollSpotlight() {
             ))}
           </ul>
 
-          <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }} className="w-fit">
-            <Link
-              to="/app"
-              className="inline-flex h-12 items-center rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+          <motion.div className="w-fit">
+            <div
+              aria-disabled="true"
+              className="inline-flex h-12 cursor-default items-center rounded-lg bg-primary px-7 text-sm font-medium text-white opacity-60 shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
             >
-              Schedule a payout
-            </Link>
+              Coming soon
+            </div>
           </motion.div>
         </div>
 

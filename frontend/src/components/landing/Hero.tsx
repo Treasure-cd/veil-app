@@ -1,6 +1,5 @@
 import { motion } from 'framer-motion'
-import { Link } from 'react-router'
-import { ArrowRight, LockKey, PlayCircle } from '@phosphor-icons/react'
+import { LockKey, PlayCircle } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
 
 const ease = [0.22, 1, 0.36, 1] as const
@@ -15,7 +14,7 @@ const word = {
 
 export default function Hero() {
   return (
-    <section className="relative flex min-h-screen items-center overflow-hidden pt-24">
+    <section className="relative flex min-h-screen items-center overflow-hidden pt-24 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]">
       {/* glows */}
       <motion.div
         aria-hidden
@@ -70,22 +69,20 @@ export default function Hero() {
             transition={{ delay: 0.9, duration: 0.6, ease }}
             className="flex flex-wrap items-center gap-4"
           >
-            <motion.div whileHover={{ scale: 1.04 }} whileTap={{ scale: 0.96 }}>
-              <Link
-                to="/app"
-                className="text-bold inline-flex h-12 items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
-              >
-                Launch App
-                <ArrowRight weight="bold" size={16} />
-              </Link>
-            </motion.div>
+            <div
+              aria-disabled="true"
+              className="text-bold inline-flex h-12 cursor-default items-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-white opacity-60 shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+            >
+              Coming soon
+            </div>
             <motion.a
               href="#how"
               whileHover={{ scale: 1.03 }}
               whileTap={{ scale: 0.97 }}
               className="inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
             >
-              See how it works
+              <PlayCircle weight="fill" size={20} className="text-primary/70" />
+              Watch the demo
             </motion.a>
           </motion.div>
         </div>

@@ -142,23 +142,30 @@ async def create_group(
 
     try:
         release_at_dt = datetime.fromisoformat(req.releaseAt.replace("Z", "+00:00"))
+        # 1. Strip timezone from release_at right after parsing
+        release_at_naive = release_at_dt.replace(tzinfo=None)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ISO releaseAt timestamp")
+
+    # 2. Get current UTC time and strip the timezone for the DB
+    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
 
     group = PayrollGroup(
         user_id=current_user.id,
         employer_ref=req.employerRef,
         title=req.title,
         token=req.token,
-        release_at=release_at_dt,
+        # 3. Use the naive variables we just created
+        release_at=release_at_naive,
         confirmation_window_hours=req.confirmationWindowHours,
         auto_proceed_after_confirmation_window=req.autoProceedAfterConfirmationWindow,
         registration_link_open=req.registrationLinkOpen,
         recipients_json=json.dumps(recipients_list),
         status="open" if req.registrationLinkOpen else "draft",
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc)
+        created_at=now_naive,
+        updated_at=now_naive
     )
+
     db.add(group)
     await db.commit()
     await db.refresh(group)

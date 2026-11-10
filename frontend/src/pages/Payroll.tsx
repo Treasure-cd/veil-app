@@ -2,11 +2,13 @@ import React, { useState, useRef, useMemo } from 'react'
 import Papa from 'papaparse'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
+import { WalletMultiButton } from '@solana/wallet-adapter-react-ui'
 import {
   Users, CalendarBlank, UploadSimple, Plus,
   Trash, LockKey, CheckCircle, WarningCircle
 } from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
+import { loadSession } from '../auth/auth.storage'
 // Import your umbra wrapper here when ready:
 // import { umbra } from '../lib/umbra'
 
@@ -148,6 +150,11 @@ export default function Payroll() {
   // --- Submission ---
   const handleConfirm = async () => {
     setError(null)
+
+    console.log('[Payroll Submission] Triggered check:', {
+          publicKey: !!publicKey,
+          signTransaction: !!signTransaction
+        })
     if (!publicKey || !signTransaction) { setError('Please connect your wallet to fund payroll.'); return }
     if (!payrollDate || !payrollTime) { setError('Please set a release date and time.'); return }
 
@@ -160,9 +167,13 @@ export default function Payroll() {
     setIsLocking(true)
     try {
       const decimals = payrollToken === 'SOL' ? 9 : 6
-      const tokenStr = localStorage.getItem('veil_jwt')
+      const session = loadSession()
+      if (!session || !session.token) {
+        throw new Error("Authentication session expired. Please log in again.")
+      }
+      const tokenStr = session.token
 
-      // 1. Create Group
+            // 1. Create Group
       const createRes = await fetch('http://localhost:8000/v1/payroll/groups', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenStr}` },
@@ -189,12 +200,17 @@ export default function Payroll() {
 
       // 3. Confirm Lock with Backend
       const lockRes = await fetch(`http://localhost:8000/v1/payroll/groups/${group.id}/lock`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenStr}` },
-        body: JSON.stringify({ vaultSignature: signature })
-      })
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${tokenStr}` },
+              body: JSON.stringify({ vaultSignature: signature })
+            })
 
-      if (!lockRes.ok) throw new Error("Failed to lock vault.")
+            if (!lockRes.ok) {
+              // Parse the error message from the backend
+              const errorData = await lockRes.json().catch(() => null);
+              console.error("Lock failure response:", errorData);
+              throw new Error(errorData?.detail || "Failed to lock vault.");
+            }
 
       // Success Reset
       setRecipients([{ id: crypto.randomUUID(), name: '', address: '', amount: '' }])
@@ -204,6 +220,7 @@ export default function Payroll() {
 
     } catch (err: any) {
       setError(err.message || 'An error occurred during payroll submission.')
+
     } finally {
       setIsLocking(false)
     }
@@ -392,16 +409,23 @@ export default function Payroll() {
               </div>
             </div>
 
-            <Button
-              size="lg"
-              fullWidth
-              onClick={handleConfirm}
-              loading={isLocking}
-              className="mt-6 h-14 text-base shadow-lg shadow-primary/20"
-              leftIcon={<LockKey size={20} weight="bold" />}
-            >
-              Schedule & Fund Payroll
-            </Button>
+            {!publicKey ? (
+              <div className="mt-6 flex flex-col items-center gap-3">
+                <p className="text-sm font-medium text-red-500">Wallet disconnected. Please reconnect to fund.</p>
+                <WalletMultiButton className="!bg-primary hover:!bg-primary/90 !h-14 !w-full !rounded-lg !flex !justify-center !text-base !font-semibold" />
+              </div>
+            ) : (
+              <Button
+                size="lg"
+                fullWidth
+                onClick={handleConfirm}
+                loading={isLocking}
+                className="mt-6 h-14 text-base shadow-lg shadow-primary/20"
+                leftIcon={<LockKey size={20} weight="bold" />}
+              >
+                Schedule & Fund Payroll
+              </Button>
+            )}
 
             <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
               Funds will be securely locked in a smart contract vault and automatically disbursed at the scheduled time.

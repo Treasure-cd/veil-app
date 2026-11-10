@@ -1,6 +1,4 @@
-import { Link } from 'react-router'
 import { motion } from 'framer-motion'
-import { ArrowRight } from '@phosphor-icons/react'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -67,17 +65,14 @@ export default function CTA() {
             whileInView={{ opacity: 1, y: 0 }}
             viewport={{ once: true }}
             transition={{ delay: 0.6, duration: 0.6, ease }}
-            whileHover={{ scale: 1.05 }}
-            whileTap={{ scale: 0.96 }}
             className="inline-block"
           >
-            <Link
-              to="/app"
-              className="inline-flex h-14 items-center gap-2 rounded-lg bg-white px-9 text-sm font-semibold text-secondary shadow-[0_0_60px_rgba(255,255,255,0.25)]"
+            <div
+              aria-disabled="true"
+              className="inline-flex h-14 cursor-default items-center gap-2 rounded-lg bg-white px-9 text-sm font-semibold text-secondary opacity-60 shadow-[0_0_60px_rgba(255,255,255,0.25)]"
             >
-              Launch App
-              <ArrowRight weight="bold" size={16} />
-            </Link>
+              Coming soon
+            </div>
           </motion.div>
         </div>
       </motion.div>

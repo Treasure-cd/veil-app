@@ -1,6 +1,7 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router'
+import '@solana/wallet-adapter-react-ui/styles.css'
 import App from './App'
 import "./index.css";
 
