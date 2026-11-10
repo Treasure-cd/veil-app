@@ -1,5 +1,5 @@
 import { motion } from 'framer-motion'
-import { LockKey, PlayCircle } from '@phosphor-icons/react'
+import { LockKey } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
 
 const ease = [0.22, 1, 0.36, 1] as const
@@ -71,7 +71,7 @@ export default function Hero() {
           >
             <div
               aria-disabled="true"
-              className="text-bold inline-flex h-12 cursor-default items-center gap-2 rounded-full bg-primary px-7 text-sm font-medium text-white opacity-60 shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
+              className="text-bold inline-flex h-12 cursor-default items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white opacity-60 shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
             >
               Coming soon
             </div>
@@ -81,8 +81,7 @@ export default function Hero() {
               whileTap={{ scale: 0.97 }}
               className="inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
             >
-              <PlayCircle weight="fill" size={20} className="text-primary/70" />
-              Watch the demo
+              See the demo
             </motion.a>
           </motion.div>
         </div>
