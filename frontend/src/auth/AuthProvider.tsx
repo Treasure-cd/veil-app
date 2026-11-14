@@ -26,13 +26,14 @@ function toMessage(e: unknown): string {
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const { publicKey, signMessage } = useWallet()
+  const { publicKey, signMessage, connecting, disconnect } = useWallet()
 
   const [session, setSession] = useState<Session | null>(() => loadSession())
   const [step, setStep] = useState<SignInStep>('idle')
   const [error, setError] = useState<string | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
   const sessionRef = useRef<Session | null>(session)
+  const lastConnectedAddressRef = useRef<string | null>(publicKey?.toBase58() ?? null)
 
   const applySession = useCallback((next: Session | null) => {
     sessionRef.current = next
@@ -52,7 +53,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!session) return
     const exp = getTokenExpiry(session.token)
-    if (exp === null) return
+    if (exp === null) {
+      applySession(null)
+      return
+    }
     const ms = exp - Date.now()
     if (ms <= 0) {
       applySession(null)
@@ -62,13 +66,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => clearTimeout(id)
   }, [session, applySession])
 
-  // User switched to a different account in their wallet: the session no longer matches.
-  // A plain disconnect keeps the session; wallet-dependent actions will ask to reconnect.
+  // On reload, there may be no public key until the wallet adapter restores its connection.
+  // Keep the persisted session during that gap, but clear it if an active wallet disconnects
+  // or changes to an address that does not own this session.
   useEffect(() => {
-    if (session && publicKey && publicKey.toBase58() !== session.user.address) {
-      applySession(null)
-    }
-  }, [session, publicKey, applySession])
+    if (connecting) return
+
+    const address = publicKey?.toBase58() ?? null
+    if (address) lastConnectedAddressRef.current = address
+    if (!session || address === session.user.address) return
+    if (address !== null || lastConnectedAddressRef.current !== null) applySession(null)
+  }, [session, publicKey, connecting, applySession])
 
   const signIn = useCallback(async () => {
     if (!publicKey || !signMessage) {
@@ -76,6 +84,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return
     }
     const address = publicKey.toBase58()
+    const currentSession = sessionRef.current
+    const expiresAt = currentSession ? getTokenExpiry(currentSession.token) : null
+    if (currentSession?.user.address === address && expiresAt !== null && expiresAt > Date.now()) {
+      setAuthModalOpen(false)
+      setError(null)
+      return
+    }
     setError(null)
 
     try {
@@ -99,6 +114,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [publicKey, signMessage, applySession])
 
   const signOut = useCallback(() => applySession(null), [applySession])
+  const disconnectWallet = useCallback(async () => {
+    applySession(null)
+    setError(null)
+    setAuthModalOpen(false)
+    try {
+      await disconnect()
+    } catch {
+      setError('Veil signed out, but your wallet could not be disconnected. Try again in your wallet.')
+    }
+  }, [applySession, disconnect])
   const openAuthModal = useCallback(() => setAuthModalOpen(true), [])
   const closeAuthModal = useCallback(() => setAuthModalOpen(false), [])
   const clearError = useCallback(() => setError(null), [])
@@ -112,11 +137,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       authModalOpen,
       signIn,
       signOut,
+      disconnectWallet,
       openAuthModal,
       closeAuthModal,
       clearError,
     }),
-    [session, step, error, authModalOpen, signIn, signOut, openAuthModal, closeAuthModal, clearError],
+    [session, step, error, authModalOpen, signIn, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

@@ -9,6 +9,7 @@ export interface AuthContextValue {
   authModalOpen: boolean
   signIn: () => Promise<void>
   signOut: () => void
+  disconnectWallet: () => Promise<void>
   openAuthModal: () => void
   closeAuthModal: () => void
   clearError: () => void

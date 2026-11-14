@@ -16,7 +16,7 @@ export function getTokenExpiry(token: string): number | null {
 
 function isExpired(token: string) {
   const exp = getTokenExpiry(token)
-  return exp !== null && exp <= Date.now()
+  return exp === null || exp <= Date.now()
 }
 
 export function saveSession(session: Session) {
