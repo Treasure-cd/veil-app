@@ -1,6 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+import asyncio
+import logging
+import base58
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from uuid import UUID
 from datetime import datetime, timezone
@@ -14,14 +18,14 @@ from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
 from solders.signature import Signature
-from solders.transaction_status import TransactionConfirmationStatus
 
 router = APIRouter(
     prefix="/payments",
     tags=["payments"],
 )
 
-# 1. ADDED BASIC VALIDATION
+logger = logging.getLogger(__name__)
+
 class CreatePaymentIntentRequest(BaseModel):
     merchantRef: str
     mint: str
@@ -59,7 +63,6 @@ def parse_uuid(value: str) -> UUID:
         raise HTTPException(status_code=400, detail="Invalid intent ID") from exc
 
 def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
-    # 2. TRIM DATA FOR NON-OWNERS (Privacy)
     data = {
         "id": str(intent.id),
         "merchantRef": intent.merchant_ref,
@@ -82,29 +85,6 @@ def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
         })
     return data
 
-async def verify_solana_transaction(signature_str: str) -> bool:
-    """Verifies that a transaction was successful on the blockchain."""
-    try:
-        sig = Signature.from_string(signature_str)
-        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
-            response = await client.get_signature_statuses(
-                [sig],
-                search_transaction_history=True,
-            )
-            if not response.value or not response.value[0]:
-                return False
-            transaction_status = response.value[0]
-            return (
-                transaction_status.err is None
-                and transaction_status.confirmation_status
-                in (
-                    TransactionConfirmationStatus.Confirmed,
-                    TransactionConfirmationStatus.Finalized,
-                )
-            )
-    except Exception:
-        return False
-
 async def verify_transfer(
     signature_str: str,
     mint: str,
@@ -112,21 +92,35 @@ async def verify_transfer(
     amount_atomic: str,
     after: datetime,
     direction: Literal["in", "out"] = "in",
+    expected_memo: str | None = None,
 ) -> bool:
     try:
         sig = Signature.from_string(signature_str)
         async with AsyncClient(settings.SOLANA_RPC_URL) as client:
-            response = await client.get_transaction(
-                sig,
-                encoding="jsonParsed",
-                commitment=Confirmed,
-                max_supported_transaction_version=0,
-            )
-        tx = response.value
-        if tx is None or tx.transaction.meta is None:
+            tx = None
+            for attempt in range(6):
+                response = await client.get_transaction(
+                    sig,
+                    encoding="jsonParsed",
+                    commitment=Confirmed,
+                    max_supported_transaction_version=0,
+                )
+                tx = response.value
+                if tx is not None:
+                    break
+                if attempt < 5:
+                    await asyncio.sleep(1.5)
+
+        if tx is None:
+            logger.warning("transaction not visible for signature %s", signature_str)
             return False
+        if tx.transaction.meta is None:
+            logger.warning("transaction metadata missing for signature %s", signature_str)
+            return False
+
         meta = tx.transaction.meta
         if meta.err is not None:
+            logger.warning("transaction failed on-chain for signature %s: %s", signature_str, meta.err)
             return False
 
         after_utc = (
@@ -135,8 +129,45 @@ async def verify_transfer(
             else after.astimezone(timezone.utc)
         )
         created_ts = after_utc.timestamp()
-        if tx.block_time is None or tx.block_time < created_ts:
+        if tx.block_time is None:
+            logger.warning("block time missing for signature %s", signature_str)
             return False
+        if tx.block_time < created_ts - 60:
+            logger.warning("transaction predates intent for signature %s", signature_str)
+            return False
+
+        if expected_memo is not None:
+            instructions = tx.transaction.transaction.message.instructions
+            memo_program = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+
+            def memo_matches(instruction) -> bool:
+                if str(getattr(instruction, "program_id", "")) != memo_program:
+                    return False
+                parsed = getattr(instruction, "parsed", None)
+                if parsed == expected_memo:
+                    return True
+                if isinstance(parsed, dict):
+                    values = [parsed]
+                    while values:
+                        value = values.pop()
+                        if value == expected_memo:
+                            return True
+                        if isinstance(value, dict):
+                            values.extend(value.values())
+                        elif isinstance(value, list):
+                            values.extend(value)
+                data = getattr(instruction, "data", None)
+                if data:
+                    try:
+                        return base58.b58decode(data).decode("utf-8") == expected_memo
+                    except (ValueError, UnicodeDecodeError):
+                        return False
+                return False
+
+            has_intent_memo = any(memo_matches(instruction) for instruction in instructions)
+            if not has_intent_memo:
+                logger.warning("intent memo missing for signature %s", signature_str)
+                return False
 
         def balance(entries) -> int:
             total = 0
@@ -146,8 +177,13 @@ async def verify_transfer(
             return total
 
         delta = balance(meta.post_token_balances) - balance(meta.pre_token_balances)
-        return delta >= int(amount_atomic) if direction == "in" else -delta >= int(amount_atomic)
+        received = delta if direction == "in" else -delta
+        if received != int(amount_atomic):
+            logger.warning("amount mismatch: expected %s got %s", amount_atomic, received)
+            return False
+        return True
     except Exception:
+        logger.exception("verify_transfer failed for %s", signature_str)
         return False
 
 @router.post("/intents")
@@ -186,7 +222,6 @@ async def get_intent(
     if not intent:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
-    # Check if the person viewing is the merchant who created it
     is_owner = current_user is not None and intent.user_id == current_user.id
     return format_intent(intent, is_owner=is_owner)
 
@@ -209,7 +244,6 @@ async def confirm_fund(
     if not intent:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
-    # 3. STATE MACHINE CHECK
     if intent.status != "created":
         raise HTTPException(status_code=409, detail="Payment has already been funded or claimed.")
 
@@ -221,13 +255,13 @@ async def confirm_fund(
     if duplicate.first():
         raise HTTPException(status_code=409, detail="Signature already used")
 
-    # 4. BLOCKCHAIN VERIFICATION
     is_valid_tx = await verify_transfer(
         req.signature,
         intent.mint,
         intent.recipient_address,
         intent.amount_atomic,
         intent.created_at,
+        expected_memo=f"veil:{intent.id}",
     )
     if not is_valid_tx:
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
@@ -237,7 +271,11 @@ async def confirm_fund(
     intent.updated_at = utc_now()
 
     db.add(intent)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError as exc:
+        await db.rollback()
+        raise HTTPException(status_code=409, detail="Signature already used") from exc
     await db.refresh(intent)
     return format_intent(intent, is_owner=False)
 
@@ -245,7 +283,7 @@ async def confirm_fund(
 async def confirm_claim(
     intent_id: str,
     req: ConfirmClaimRequest,
-    current_user: User = Depends(get_current_user), # MUST BE LOGGED IN
+    current_user: User = Depends(get_current_user), # must be logged in
     db: AsyncSession = Depends(get_session)
 ):
     uuid_id = parse_uuid(intent_id)
@@ -257,11 +295,10 @@ async def confirm_claim(
     res = await db.execute(stmt)
     intent = res.scalars().first()
 
-    # 5. OWNERSHIP CHECK: Only the merchant can claim
     if not intent or intent.user_id != current_user.id:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
-    # 6. STATE MACHINE CHECK: Can only claim if it's currently funded
+
     if intent.status != "funded":
         raise HTTPException(status_code=409, detail="Can only claim a funded payment.")
 

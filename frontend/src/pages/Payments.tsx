@@ -9,12 +9,12 @@ import {
 import { Button } from '../components/ui/Button'
 import { useAuth } from '../auth/useAuth'
 import { api } from '../services/api'
+import { NETWORK, NETWORK_LABEL, USDC_MINT } from '../lib/network'
 
-type Token = 'USDC' | 'SOL'
+type Token = 'USDC'
 
 const TOKEN_CONFIG: Record<Token, { decimals: number; mint: string }> = {
-  USDC: { decimals: 6, mint: '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU' },
-  SOL: { decimals: 9, mint: 'So11111111111111111111111111111111111111112' },
+  USDC: { decimals: 6, mint: USDC_MINT },
 }
 
 interface PaymentIntent {
@@ -33,7 +33,7 @@ function toAtomicAmount(value: string, decimals: number): string | null {
 export default function Payments() {
   const { user } = useAuth()
   const [amount, setAmount] = useState('')
-  const [token, setToken] = useState<Token>('USDC')
+  const token: Token = 'USDC'
   const [memo, setMemo] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -173,26 +173,12 @@ export default function Payments() {
                 className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 font-mono text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
               />
             </div>
-            <fieldset className="space-y-1.5">
-              <legend className="text-sm font-medium">Currency</legend>
-              <div className="flex h-11 rounded-card bg-primary/5 p-1">
-                {(['USDC', 'SOL'] as const).map((option) => (
-                  <button
-                    key={option}
-                    type="button"
-                    aria-pressed={token === option}
-                    onClick={() => setToken(option)}
-                    className={`flex-1 rounded-md text-sm font-medium transition-colors ${
-                      token === option
-                        ? 'bg-white text-primary shadow-veil-sm'
-                        : 'text-foreground/60 hover:text-foreground'
-                    }`}
-                  >
-                    {option}
-                  </button>
-                ))}
+            <div className="space-y-1.5">
+              <span className="text-sm font-medium">Currency</span>
+              <div className="flex h-11 items-center rounded-card border border-primary/15 bg-primary/5 px-3 font-medium text-primary">
+                USDC · {NETWORK_LABEL[NETWORK]}
               </div>
-            </fieldset>
+            </div>
           </div>
 
           <div className="border-t border-primary/10 pt-5">

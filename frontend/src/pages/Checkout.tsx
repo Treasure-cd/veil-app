@@ -6,6 +6,7 @@ import {
   SystemProgram,
   Transaction,
   TransactionInstruction,
+  type BlockhashWithExpiryBlockHeight,
 } from '@solana/web3.js'
 import { CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } from '@phosphor-icons/react'
 import { useParams } from 'react-router'
@@ -13,12 +14,13 @@ import { truncateAddress } from '../lib/format'
 import { api } from '../services/api'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '../components/ui/Button'
+import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, USDC_MINT } from '../lib/network'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
-const TOKENS: Record<string, { symbol: string; decimals: number; native?: boolean }> = {
-  '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU': { symbol: 'USDC', decimals: 6 },
-  'So11111111111111111111111111111111111111112': { symbol: 'SOL', decimals: 9, native: true },
+const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
+const TOKENS: Record<string, { symbol: string; decimals: number }> = {
+  [USDC_MINT]: { symbol: 'USDC', decimals: 6 },
 }
 
 interface InvoiceData {
@@ -41,7 +43,15 @@ async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
   return address
 }
 
-function createAssociatedTokenAccountInstruction(
+function safeRpcEndpoint(endpoint: string) {
+  try {
+    return new URL(endpoint).origin
+  } catch {
+    return '<custom RPC>'
+  }
+}
+
+function createAssociatedTokenAccountIdempotentInstruction(
   payer: PublicKey,
   owner: PublicKey,
   mint: PublicKey,
@@ -57,7 +67,7 @@ function createAssociatedTokenAccountInstruction(
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
       { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
     ],
-    data: new Uint8Array(),
+    data: new Uint8Array([1]),
   })
 }
 
@@ -119,7 +129,9 @@ export default function Checkout() {
   const [claimSignature, setClaimSignature] = useState('')
   const [claimError, setClaimError] = useState<string | null>(null)
   const [claiming, setClaiming] = useState(false)
-  const [pendingSignature, setPendingSignature] = useState<string | null>(null)
+  const [pendingTransaction, setPendingTransaction] = useState<
+    ({ signature: string } & BlockhashWithExpiryBlockHeight) | null
+  >(null)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
 
@@ -167,10 +179,46 @@ export default function Checkout() {
     setPaymentError(null)
     setPaying(true)
     try {
-      let signature = pendingSignature
-      if (!signature) {
+      let pending = pendingTransaction
+      if (!pending) {
+        const rpcEndpoint = safeRpcEndpoint(connection.rpcEndpoint)
+        console.info('[Veil checkout] payment network', {
+          configuredNetwork: NETWORK,
+          rpcEndpoint,
+          intentMint: invoice.mint,
+          expectedUsdcMint: USDC_MINT,
+          payer: publicKey.toBase58(),
+        })
+        if (invoice.mint !== USDC_MINT) {
+          throw new Error(
+            `This payment request uses a different USDC mint than the configured ${NETWORK_LABEL[NETWORK]} network. Ask the merchant to create a new payment link on ${NETWORK_LABEL[NETWORK]}.`,
+          )
+        }
         const token = TOKENS[invoice.mint]
         if (!token) throw new Error('This checkout uses a token that is not supported on this network.')
+        let genesisHash: string
+        try {
+          genesisHash = await connection.getGenesisHash()
+        } catch (rpcError) {
+          console.error('[Veil checkout] could not read Solana cluster from RPC', {
+            rpcEndpoint,
+            errorType: rpcError instanceof Error ? rpcError.name : typeof rpcError,
+          })
+          throw new Error(
+            `Could not reach the configured Solana RPC (${rpcEndpoint}). Check VITE_SOLANA_RPC_URL and try again.`,
+          )
+        }
+        if (genesisHash !== SOLANA_GENESIS_HASH[NETWORK]) {
+          console.error('[Veil checkout] RPC cluster does not match app configuration', {
+            configuredNetwork: NETWORK,
+            rpcEndpoint,
+            genesisHash,
+            expectedGenesisHash: SOLANA_GENESIS_HASH[NETWORK],
+          })
+          throw new Error(
+            `The configured Solana RPC is connected to a different cluster than ${NETWORK_LABEL[NETWORK]}. Check VITE_SOLANA_NETWORK and VITE_SOLANA_RPC_URL.`,
+          )
+        }
         const amount = BigInt(invoice.amountAtomic)
         if (amount <= 0n || amount > 18_446_744_073_709_551_615n) {
           throw new Error('This payment amount is invalid.')
@@ -178,46 +226,154 @@ export default function Checkout() {
         const recipient = new PublicKey(invoice.recipientAddress)
         const transaction = new Transaction()
 
-        if (token.native) {
-          transaction.add(
-            SystemProgram.transfer({ fromPubkey: publicKey, toPubkey: recipient, lamports: amount }),
+        const mint = new PublicKey(invoice.mint)
+        const payerAta = await associatedTokenAddress(publicKey, mint)
+        const destination = await associatedTokenAddress(recipient, mint)
+        console.info('[Veil checkout] payer token account lookup', {
+          configuredNetwork: NETWORK,
+          rpcEndpoint,
+          mint: invoice.mint,
+          payer: publicKey.toBase58(),
+          payerAta: payerAta.toBase58(),
+        })
+        let payerTokenAccounts: Awaited<ReturnType<typeof connection.getParsedTokenAccountsByOwner>>
+        try {
+          payerTokenAccounts = await connection.getParsedTokenAccountsByOwner(
+            publicKey,
+            { mint },
+            'confirmed',
           )
-        } else {
-          const mint = new PublicKey(invoice.mint)
-          const source = await associatedTokenAddress(publicKey, mint)
-          const destination = await associatedTokenAddress(recipient, mint)
-          const sourceAccount = await connection.getAccountInfo(source, 'confirmed')
-          if (!sourceAccount) {
-            throw new Error(`Your wallet does not have a ${token.symbol} token account.`)
-          }
-          const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
-          if (!destinationAccount) {
-            transaction.add(createAssociatedTokenAccountInstruction(publicKey, recipient, mint, destination))
-          }
-          transaction.add(
-            transferCheckedInstruction(source, destination, mint, publicKey, amount, token.decimals),
+        } catch (rpcError) {
+          console.error('[Veil checkout] payer token account RPC lookup failed', {
+            configuredNetwork: NETWORK,
+            rpcEndpoint,
+            mint: invoice.mint,
+            payer: publicKey.toBase58(),
+            payerAta: payerAta.toBase58(),
+            errorType: rpcError instanceof Error ? rpcError.name : typeof rpcError,
+          })
+          throw new Error(
+            `Could not look up your USDC account on ${NETWORK_LABEL[NETWORK]}. The RPC request failed; check your connection and try again.`,
           )
         }
+        if (payerTokenAccounts.value.length === 0) {
+          console.warn('[Veil checkout] payer has no token account for configured USDC mint', {
+            configuredNetwork: NETWORK,
+            rpcEndpoint,
+            mint: invoice.mint,
+            payer: publicKey.toBase58(),
+            payerAta: payerAta.toBase58(),
+          })
+          const fundingHint =
+            NETWORK === 'devnet'
+              ? 'Get test USDC from faucet.circle.com and select Solana Devnet.'
+              : 'Make sure the wallet holds native Circle USDC on Solana Mainnet.'
+          throw new Error(
+            `No USDC token account was found for your wallet on ${NETWORK_LABEL[NETWORK]}. It needs USDC for mint ${invoice.mint}. ${fundingHint}`,
+          )
+        }
+
+        const payerAccounts = payerTokenAccounts.value.map((item) => ({
+          address: item.pubkey,
+          amount: BigInt(item.account.data.parsed.info.tokenAmount.amount as string),
+        }))
+        console.info('[Veil checkout] payer token accounts found', {
+          mint: invoice.mint,
+          accounts: payerAccounts.map(({ address, amount }) => ({
+            address: address.toBase58(),
+            amount: amount.toString(),
+          })),
+        })
+        const sourceAccount =
+          payerAccounts.find(({ address, amount: balance }) => address.equals(payerAta) && balance >= amount) ??
+          payerAccounts.find(({ amount: balance }) => balance >= amount)
+        if (!sourceAccount) {
+          const available = payerAccounts.reduce((total, account) => total + account.amount, 0n)
+          console.warn('[Veil checkout] payer USDC balance is below the requested amount', {
+            configuredNetwork: NETWORK,
+            rpcEndpoint,
+            mint: invoice.mint,
+            payer: publicKey.toBase58(),
+            requestedAmount: amount.toString(),
+            availableAmount: available.toString(),
+          })
+          throw new Error(
+            `Your wallet has ${formatAmount(available.toString(), token.decimals)} USDC on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(invoice.amountAtomic, token.decimals)} USDC.`,
+          )
+        }
+        const source = sourceAccount.address
+        const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
+        if (!destinationAccount) {
+          transaction.add(
+            createAssociatedTokenAccountIdempotentInstruction(publicKey, recipient, mint, destination),
+          )
+        }
+        transaction.add(
+          transferCheckedInstruction(source, destination, mint, publicKey, amount, token.decimals),
+          new TransactionInstruction({
+            programId: MEMO_PROGRAM_ID,
+            keys: [],
+            data: new TextEncoder().encode(`veil:${invoice.id}`),
+          }),
+        )
 
         const blockhash = await connection.getLatestBlockhash('confirmed')
         transaction.feePayer = publicKey
         transaction.recentBlockhash = blockhash.blockhash
-        signature = await sendTransaction(transaction, connection)
-        setPendingSignature(signature)
 
-        const confirmation = await connection.confirmTransaction(
-          { ...blockhash, signature },
-          'confirmed',
-        )
-        if (confirmation.value.err) throw new Error('The transfer failed on the Solana network.')
+        let simulation
+        try {
+          simulation = await connection.simulateTransaction(transaction)
+        } catch (simulationError) {
+          console.error('[Veil checkout] transaction simulation RPC failed', {
+            configuredNetwork: NETWORK,
+            rpcEndpoint,
+            mint: invoice.mint,
+            payer: publicKey.toBase58(),
+            error: simulationError,
+          })
+          throw new Error(
+            `Could not simulate this transaction on ${NETWORK_LABEL[NETWORK]}. Check the Solana RPC and try again.`,
+          )
+        }
+
+        console.info('[Veil checkout] transaction simulation result', {
+          configuredNetwork: NETWORK,
+          rpcEndpoint,
+          mint: invoice.mint,
+          payer: publicKey.toBase58(),
+          err: simulation.value.err,
+          logs: simulation.value.logs,
+          unitsConsumed: simulation.value.unitsConsumed,
+        })
+        if (simulation.value.err) {
+          const logs = simulation.value.logs?.slice(-12).join('\n')
+          throw new Error(
+            [
+              `Solana simulation rejected this transaction: ${JSON.stringify(simulation.value.err)}`,
+              logs ? `Program logs:\n${logs}` : null,
+            ]
+              .filter(Boolean)
+              .join('\n'),
+          )
+        }
+
+        const signature = await sendTransaction(transaction, connection)
+        pending = { signature, ...blockhash }
+        setPendingTransaction(pending)
       }
+
+      if (!pending) throw new Error('The transaction could not be prepared. Please try again.')
+      const transactionToConfirm = pending
+      const confirmation = await connection.confirmTransaction(transactionToConfirm, 'confirmed')
+      if (confirmation.value.err) throw new Error('The transfer failed on the Solana network.')
 
       await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
         method: 'POST',
-        body: JSON.stringify({ signature }),
+        body: JSON.stringify({ signature: transactionToConfirm.signature }),
       })
       setInvoice({ ...invoice, status: 'funded' })
-      setPendingSignature(null)
+      setPendingTransaction(null)
     } catch (err) {
       setPaymentError(err instanceof Error ? err.message : 'Payment failed. Please try again.')
     } finally {
@@ -386,11 +542,25 @@ export default function Checkout() {
       </div>
 
       {paymentError && (
-        <p role="alert" className="mb-4 rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
-          {pendingSignature
-            ? `Transfer sent (${truncateAddress(pendingSignature)}), but confirmation is pending. Retry to finish confirmation. `
+        <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+          {pendingTransaction
+            ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
             : ''}
           {paymentError}
+          {NETWORK === 'devnet' && paymentError.startsWith('No USDC token account') && (
+            <>
+              {' '}
+              <a
+                href="https://faucet.circle.com/"
+                target="_blank"
+                rel="noreferrer"
+                className="font-semibold underline underline-offset-2"
+              >
+                Open Circle’s Devnet faucet
+              </a>
+              . Select Solana Devnet and send USDC to the connected payer wallet.
+            </>
+          )}
         </p>
       )}
       {connectError && (
@@ -403,7 +573,7 @@ export default function Checkout() {
             Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
           </p>
           <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()}>
-            {pendingSignature ? 'Retry payment confirmation' : `Pay ${displayAmount} ${token.symbol}`}
+            {pendingTransaction ? 'Retry payment confirmation' : `Pay ${displayAmount} ${token.symbol}`}
           </Button>
         </div>
       ) : installedWallets.length > 0 ? (
