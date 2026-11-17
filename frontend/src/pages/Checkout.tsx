@@ -178,6 +178,7 @@ export default function Checkout() {
     if (!invoice || !publicKey || !connected) return
     setPaymentError(null)
     setPaying(true)
+    let paymentPhase = 'Preparing the payment'
     try {
       let pending = pendingTransaction
       if (!pending) {
@@ -197,6 +198,7 @@ export default function Checkout() {
         const token = TOKENS[invoice.mint]
         if (!token) throw new Error('This checkout uses a token that is not supported on this network.')
         let genesisHash: string
+        paymentPhase = 'Checking the Solana RPC cluster'
         try {
           genesisHash = await connection.getGenesisHash()
         } catch (rpcError) {
@@ -237,6 +239,7 @@ export default function Checkout() {
           payerAta: payerAta.toBase58(),
         })
         let payerTokenAccounts: Awaited<ReturnType<typeof connection.getParsedTokenAccountsByOwner>>
+        paymentPhase = 'Looking up your USDC token accounts'
         try {
           payerTokenAccounts = await connection.getParsedTokenAccountsByOwner(
             publicKey,
@@ -302,6 +305,7 @@ export default function Checkout() {
           )
         }
         const source = sourceAccount.address
+        paymentPhase = 'Checking the merchant token account'
         const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
         if (!destinationAccount) {
           transaction.add(
@@ -322,6 +326,7 @@ export default function Checkout() {
         transaction.recentBlockhash = blockhash.blockhash
 
         let simulation
+        paymentPhase = 'Simulating the Solana transaction'
         try {
           simulation = await connection.simulateTransaction(transaction)
         } catch (simulationError) {
@@ -358,6 +363,7 @@ export default function Checkout() {
           )
         }
 
+        paymentPhase = 'Waiting for wallet approval and signature'
         const signature = await sendTransaction(transaction, connection)
         pending = { signature, ...blockhash }
         setPendingTransaction(pending)
@@ -365,9 +371,11 @@ export default function Checkout() {
 
       if (!pending) throw new Error('The transaction could not be prepared. Please try again.')
       const transactionToConfirm = pending
+      paymentPhase = 'Waiting for on-chain transaction confirmation'
       const confirmation = await connection.confirmTransaction(transactionToConfirm, 'confirmed')
       if (confirmation.value.err) throw new Error('The transfer failed on the Solana network.')
 
+      paymentPhase = 'Confirming the payment with Veil'
       await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
         method: 'POST',
         body: JSON.stringify({ signature: transactionToConfirm.signature }),
@@ -375,7 +383,14 @@ export default function Checkout() {
       setInvoice({ ...invoice, status: 'funded' })
       setPendingTransaction(null)
     } catch (err) {
-      setPaymentError(err instanceof Error ? err.message : 'Payment failed. Please try again.')
+      const message = err instanceof Error ? err.message : 'Payment failed. Please try again.'
+      console.error('[Veil checkout] payment failed', {
+        phase: paymentPhase,
+        errorName: err instanceof Error ? err.name : typeof err,
+        errorMessage: message,
+        stack: err instanceof Error ? err.stack : undefined,
+      })
+      setPaymentError(`${paymentPhase}: ${message}`)
     } finally {
       setPaying(false)
     }
@@ -547,7 +562,7 @@ export default function Checkout() {
             ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
             : ''}
           {paymentError}
-          {NETWORK === 'devnet' && paymentError.startsWith('No USDC token account') && (
+          {NETWORK === 'devnet' && paymentError.includes('No USDC token account') && (
             <>
               {' '}
               <a
