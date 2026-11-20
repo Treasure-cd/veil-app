@@ -1,4 +1,7 @@
+import asyncio
 import json
+import logging
+from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -10,7 +13,7 @@ from core.config import settings
 from core.session import get_session
 from app.routers.dependencies import get_current_user
 from app.models.user import User
-from app.models.payroll import PayrollGroup, PayrollLink
+from app.models.payroll import PayrollGroup, PayrollLink, utc_now_naive
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
 from solders.transaction_status import TransactionConfirmationStatus
@@ -19,6 +22,16 @@ router = APIRouter(
     prefix="/payroll",
     tags=["payroll"],
 )
+
+logger = logging.getLogger(__name__)
+
+
+def rpc_host() -> str:
+    """Return only the configured RPC hostname, never its API-key query string."""
+    try:
+        return urlsplit(settings.SOLANA_RPC_URL).hostname or "<invalid RPC URL>"
+    except ValueError:
+        return "<invalid RPC URL>"
 
 # --- Models ---
 class AddRecipientRequest(BaseModel):
@@ -53,22 +66,40 @@ async def verify_solana_transaction(signature_str: str) -> bool:
     try:
         sig = Signature.from_string(signature_str)
         async with AsyncClient(settings.SOLANA_RPC_URL) as client:
-            response = await client.get_signature_statuses(
-                [sig],
-                search_transaction_history=True,
-            )
-            if not response.value or not response.value[0]:
-                return False
-            transaction_status = response.value[0]
-            return (
-                transaction_status.err is None
-                and transaction_status.confirmation_status
-                in (
-                    TransactionConfirmationStatus.Confirmed,
-                    TransactionConfirmationStatus.Finalized,
+            for attempt in range(6):
+                response = await client.get_signature_statuses(
+                    [sig],
+                    search_transaction_history=True,
                 )
-            )
+                transaction_status = response.value[0] if response.value else None
+                if transaction_status:
+                    if transaction_status.err is not None:
+                        logger.warning(
+                            "Payroll transaction %s failed on-chain: %s",
+                            signature_str,
+                            transaction_status.err,
+                        )
+                        return False
+                    if transaction_status.confirmation_status in (
+                        TransactionConfirmationStatus.Confirmed,
+                        TransactionConfirmationStatus.Finalized,
+                    ):
+                        return True
+                if attempt < 5:
+                    await asyncio.sleep(1)
+
+        logger.warning(
+            "Payroll transaction %s was not found or did not reach confirmed status on RPC host %s",
+            signature_str,
+            rpc_host(),
+        )
+        return False
     except Exception:
+        logger.exception(
+            "verify_solana_transaction failed for signature %r on RPC host %s",
+            signature_str,
+            rpc_host(),
+        )
         return False
 
 def format_recipient(r: dict) -> dict:
@@ -142,13 +173,13 @@ async def create_group(
 
     try:
         release_at_dt = datetime.fromisoformat(req.releaseAt.replace("Z", "+00:00"))
-        # 1. Strip timezone from release_at right after parsing
-        release_at_naive = release_at_dt.replace(tzinfo=None)
+        if release_at_dt.tzinfo is None:
+            release_at_dt = release_at_dt.replace(tzinfo=timezone.utc)
+        release_at_naive = release_at_dt.astimezone(timezone.utc).replace(tzinfo=None)
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid ISO releaseAt timestamp")
 
-    # 2. Get current UTC time and strip the timezone for the DB
-    now_naive = datetime.now(timezone.utc).replace(tzinfo=None)
+    now_naive = utc_now_naive()
 
     group = PayrollGroup(
         user_id=current_user.id,
@@ -234,7 +265,7 @@ async def add_recipient(
     }
     recipients.append(new_rec)
     group.recipients_json = json.dumps(recipients)
-    group.updated_at = datetime.now(timezone.utc)
+    group.updated_at = utc_now_naive()
 
     db.add(group)
     await db.commit()
@@ -260,8 +291,8 @@ async def create_registration_link(
         token=token,
         payroll_id=uuid_id,
         open=True,
-        created_at=datetime.now(timezone.utc),
-        updated_at=datetime.now(timezone.utc)
+        created_at=utc_now_naive(),
+        updated_at=utc_now_naive()
     )
     db.add(link)
     await db.commit()
@@ -314,7 +345,7 @@ async def submit_employee_details(
     }
     recipients.append(new_rec)
     group.recipients_json = json.dumps(recipients)
-    group.updated_at = datetime.now(timezone.utc)
+    group.updated_at = utc_now_naive()
 
     db.add(group)
     await db.commit()
@@ -348,7 +379,7 @@ async def lock_vault(
     group.status = "locked"
     group.registration_link_open = False # Close registrations
     group.vault_signature = req.vaultSignature
-    group.updated_at = datetime.now(timezone.utc)
+    group.updated_at = utc_now_naive()
 
     db.add(group)
     await db.commit()
@@ -374,7 +405,7 @@ async def schedule_release(
         raise HTTPException(status_code=400, detail="Can only schedule a locked payroll group")
 
     group.status = "scheduled"
-    group.updated_at = datetime.now(timezone.utc)
+    group.updated_at = utc_now_naive()
 
     db.add(group)
     await db.commit()
@@ -407,7 +438,7 @@ async def release_payroll(
 
     group.status = "released"
     group.release_signature = req.releaseSignature
-    group.updated_at = datetime.now(timezone.utc)
+    group.updated_at = utc_now_naive()
 
     db.add(group)
     await db.commit()

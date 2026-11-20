@@ -7,12 +7,15 @@ import { NETWORK } from '../lib/network'
 
 const ENDPOINT =
   (import.meta.env.VITE_SOLANA_RPC_URL as string | undefined) || clusterApiUrl(NETWORK)
+const WS_ENDPOINT =
+  (import.meta.env.VITE_SOLANA_WS_URL as string | undefined) ||
+  ENDPOINT.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
 
 const WALLETS: Adapter[] = []
 
 export function SolanaProvider({ children }: { children: ReactNode }) {
   return (
-    <ConnectionProvider endpoint={ENDPOINT}>
+    <ConnectionProvider endpoint={ENDPOINT} config={{ wsEndpoint: WS_ENDPOINT }}>
       <WalletProvider wallets={WALLETS} autoConnect={true}>
         <WalletModalProvider>{children}</WalletModalProvider>
       </WalletProvider>

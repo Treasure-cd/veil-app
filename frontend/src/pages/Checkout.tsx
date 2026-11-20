@@ -9,7 +9,7 @@ import {
   VersionedTransaction,
   type BlockhashWithExpiryBlockHeight,
 } from '@solana/web3.js'
-import { CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } from '@phosphor-icons/react'
+import { ArrowSquareOut, CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } from '@phosphor-icons/react'
 import { useParams } from 'react-router'
 import { truncateAddress } from '../lib/format'
 import { api } from '../services/api'
@@ -34,6 +34,7 @@ interface InvoiceData {
   receiveMode: string
   memo: string | null
   status: string
+  fundSignature?: string | null
 }
 
 async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -127,6 +128,7 @@ export default function Checkout() {
   const [paying, setPaying] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentError, setPaymentError] = useState<string | null>(null)
+  const [confirmedSignature, setConfirmedSignature] = useState<string | null>(null)
   const [claimSignature, setClaimSignature] = useState('')
   const [claimError, setClaimError] = useState<string | null>(null)
   const [claiming, setClaiming] = useState(false)
@@ -147,7 +149,10 @@ export default function Checkout() {
     setLoading(true)
     void api<InvoiceData>(`/v1/payments/intents/${encodeURIComponent(id)}`)
       .then((data) => {
-        if (active) setInvoice(data)
+        if (active) {
+          setInvoice(data)
+          if (data.fundSignature) setConfirmedSignature(data.fundSignature)
+        }
       })
       .catch((err: unknown) => {
         if (active) setError(err instanceof Error ? err.message : 'We could not load this payment request.')
@@ -227,6 +232,9 @@ export default function Checkout() {
           throw new Error('This payment amount is invalid.')
         }
         const recipient = new PublicKey(invoice.recipientAddress)
+        if (publicKey.equals(recipient)) {
+          throw new Error('You cannot pay your own wallet. Ask the merchant to use a different receiving wallet.')
+        }
         const instructions: TransactionInstruction[] = []
 
         const mint = new PublicKey(invoice.mint)
@@ -381,11 +389,12 @@ export default function Checkout() {
       if (confirmation.value.err) throw new Error('The transfer failed on the Solana network.')
 
       paymentPhase = 'Confirming the payment with Veil'
-      await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
+      const confirmedInvoice = await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
         method: 'POST',
         body: JSON.stringify({ signature: transactionToConfirm.signature }),
       })
-      setInvoice({ ...invoice, status: 'funded' })
+      setConfirmedSignature(transactionToConfirm.signature)
+      setInvoice({ ...invoice, ...confirmedInvoice, status: 'funded', fundSignature: transactionToConfirm.signature })
       setPendingTransaction(null)
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Payment failed. Please try again.'
@@ -467,6 +476,16 @@ export default function Checkout() {
         <p className="mt-2 text-sm text-foreground/65">
           {displayAmount} {token.symbol} paid for “{invoice.memo || 'Payment request'}”.
         </p>
+        {(confirmedSignature || invoice.fundSignature) && (
+          <a
+            href={`https://explorer.solana.com/tx/${encodeURIComponent(confirmedSignature || invoice.fundSignature || '')}?cluster=${NETWORK}`}
+            target="_blank"
+            rel="noreferrer"
+            className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-primary underline underline-offset-4"
+          >
+            View on Solana Explorer <ArrowSquareOut size={16} />
+          </a>
+        )}
         <p className="mt-6 rounded-card bg-background px-4 py-3 text-xs text-foreground/55">
           This payment was made with a standard on-chain transfer. You can safely close this page.
         </p>

@@ -72,6 +72,8 @@ def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
         "receiveMode": intent.receive_mode,
         "memo": intent.memo,
         "status": intent.status,
+        # This signature is public on Solana and lets payers inspect the confirmed transfer.
+        "fundSignature": intent.fund_signature,
         "createdAt": intent.created_at.isoformat() + "Z",
     }
     # Only show these fields to the merchant who owns the intent
@@ -79,7 +81,6 @@ def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
         data.update({
             "userId": str(intent.user_id),
             "updatedAt": intent.updated_at.isoformat() + "Z",
-            "fundSignature": intent.fund_signature,
             "claimSignature": intent.claim_signature,
             "failureReason": intent.failure_reason
         })

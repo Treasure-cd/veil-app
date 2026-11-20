@@ -7,6 +7,7 @@ import {
   LockKey,
 } from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
+import { QRCodeSVG } from 'qrcode.react'
 import { useAuth } from '../auth/useAuth'
 import { api } from '../services/api'
 import { NETWORK, NETWORK_LABEL, USDC_MINT } from '../lib/network'
@@ -96,6 +97,10 @@ export default function Payments() {
           <p className="mx-auto mt-2 max-w-md text-sm text-foreground/65">
             Share this checkout link. Your customer does not need a Veil account, but will need to connect a Solana wallet.
           </p>
+          <div className="mx-auto mt-6 inline-flex rounded-xl border border-primary/10 bg-white p-3 shadow-sm">
+            <QRCodeSVG value={generatedLink} size={176} level="M" includeMargin aria-label="QR code for payment link" />
+          </div>
+          <p className="mt-2 text-xs text-foreground/55">Scan to open checkout</p>
           <div className="mx-auto mt-6 flex max-w-lg items-center gap-2 rounded-card border border-primary/15 bg-background p-2">
             <input
               aria-label="Payment link"

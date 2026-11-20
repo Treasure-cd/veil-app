@@ -1,7 +1,12 @@
 from sqlmodel import SQLModel, Field
 from uuid import uuid4, UUID
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
+
+
+def utc_now_naive() -> datetime:
+    """Return UTC now for this model's timestamp-without-time-zone columns."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
 
 class PayrollGroup(SQLModel, table=True):
     __tablename__ = "payroll_groups"
@@ -17,8 +22,8 @@ class PayrollGroup(SQLModel, table=True):
     registration_link_open: bool = Field(default=False)
     recipients_json: str = Field(...) # serialized list of recipients
     status: str = Field(default="draft") # draft, open, locked, scheduled, released, failed
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
     vault_signature: Optional[str] = Field(default=None)
     release_signature: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
@@ -29,5 +34,5 @@ class PayrollLink(SQLModel, table=True):
     id: UUID = Field(default_factory=uuid4)
     payroll_id: UUID = Field(..., index=True)
     open: bool = Field(default=True)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=utc_now_naive)
+    updated_at: datetime = Field(default_factory=utc_now_naive)
