@@ -4,8 +4,9 @@ import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import {
   PublicKey,
   SystemProgram,
-  Transaction,
   TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
   type BlockhashWithExpiryBlockHeight,
 } from '@solana/web3.js'
 import { CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } from '@phosphor-icons/react'
@@ -226,7 +227,7 @@ export default function Checkout() {
           throw new Error('This payment amount is invalid.')
         }
         const recipient = new PublicKey(invoice.recipientAddress)
-        const transaction = new Transaction()
+        const instructions: TransactionInstruction[] = []
 
         const mint = new PublicKey(invoice.mint)
         const payerAta = await associatedTokenAddress(publicKey, mint)
@@ -308,11 +309,11 @@ export default function Checkout() {
         paymentPhase = 'Checking the merchant token account'
         const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
         if (!destinationAccount) {
-          transaction.add(
+          instructions.push(
             createAssociatedTokenAccountIdempotentInstruction(publicKey, recipient, mint, destination),
           )
         }
-        transaction.add(
+        instructions.push(
           transferCheckedInstruction(source, destination, mint, publicKey, amount, token.decimals),
           new TransactionInstruction({
             programId: MEMO_PROGRAM_ID,
@@ -322,8 +323,12 @@ export default function Checkout() {
         )
 
         const blockhash = await connection.getLatestBlockhash('confirmed')
-        transaction.feePayer = publicKey
-        transaction.recentBlockhash = blockhash.blockhash
+        const messageV0 = new TransactionMessage({
+          payerKey: publicKey,
+          recentBlockhash: blockhash.blockhash,
+          instructions,
+        }).compileToV0Message()
+        const transaction = new VersionedTransaction(messageV0)
 
         let simulation
         paymentPhase = 'Simulating the Solana transaction'

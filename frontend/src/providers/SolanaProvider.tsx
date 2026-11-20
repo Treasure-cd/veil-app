@@ -6,7 +6,7 @@ import { clusterApiUrl } from '@solana/web3.js'
 import { NETWORK } from '../lib/network'
 
 const ENDPOINT =
-  (import.meta.env.VITE_SOLANA_RPC_URL as string | undefined) ?? clusterApiUrl(NETWORK)
+  (import.meta.env.VITE_SOLANA_RPC_URL as string | undefined) || clusterApiUrl(NETWORK)
 
 const WALLETS: Adapter[] = []
 
