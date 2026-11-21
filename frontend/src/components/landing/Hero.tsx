@@ -1,6 +1,7 @@
 import { motion } from 'framer-motion'
 import { LockKey } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
+import { OpenAppButton } from './OpenAppButton'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -162,12 +163,7 @@ export default function Hero() {
             transition={{ delay: 0.9, duration: 0.6, ease }}
             className="flex flex-wrap items-center gap-4"
           >
-            <div
-              aria-disabled="true"
-              className="inline-flex h-12 cursor-default items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white opacity-60 shadow-[0_8px_28px_rgba(92,4,159,0.35)]"
-            >
-              Coming soon
-            </div>
+            <OpenAppButton className="inline-flex h-12 items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
 
             <motion.a
               href="#how"

@@ -3,10 +3,10 @@ import type { Adapter } from '@solana/wallet-adapter-base'
 import { ConnectionProvider, WalletProvider } from '@solana/wallet-adapter-react'
 import { WalletModalProvider } from '@solana/wallet-adapter-react-ui'
 import { clusterApiUrl } from '@solana/web3.js'
-import { NETWORK } from '../lib/network'
+import { NETWORK, SOLANA_RPC_URL } from '../lib/network'
 
 const ENDPOINT =
-  (import.meta.env.VITE_SOLANA_RPC_URL as string | undefined) || clusterApiUrl(NETWORK)
+  SOLANA_RPC_URL || clusterApiUrl(NETWORK)
 const WS_ENDPOINT =
   (import.meta.env.VITE_SOLANA_WS_URL as string | undefined) ||
   ENDPOINT.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')

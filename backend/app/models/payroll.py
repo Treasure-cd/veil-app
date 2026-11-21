@@ -27,6 +27,7 @@ class PayrollGroup(SQLModel, table=True):
     vault_signature: Optional[str] = Field(default=None)
     release_signature: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
+    rate_ngn_per_token: Optional[str] = Field(default=None)
 
 class PayrollLink(SQLModel, table=True):
     __tablename__ = "payroll_links"

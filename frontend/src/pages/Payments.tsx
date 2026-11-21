@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import {
   CheckCircle,
   Copy,
@@ -10,42 +10,71 @@ import { Button } from '../components/ui/Button'
 import { QRCodeSVG } from 'qrcode.react'
 import { useAuth } from '../auth/useAuth'
 import { api } from '../services/api'
-import { NETWORK, NETWORK_LABEL, USDC_MINT } from '../lib/network'
-
-type Token = 'USDC'
-
-const TOKEN_CONFIG: Record<Token, { decimals: number; mint: string }> = {
-  USDC: { decimals: 6, mint: USDC_MINT },
-}
+import { NETWORK, NETWORK_LABEL } from '../lib/network'
+import { Money } from '../components/ui/Money'
 
 interface PaymentIntent {
   id: string
+  amount_ngn: string
+  amountAtomic: string
 }
 
-function toAtomicAmount(value: string, decimals: number): string | null {
-  if (!/^\d+(?:\.\d*)?$/.test(value)) return null
-  const [whole, fraction = ''] = value.split('.')
-  if (fraction.length > decimals) return null
-  const atomic = BigInt(whole) * 10n ** BigInt(decimals) +
-    BigInt(fraction.padEnd(decimals, '0') || '0')
-  return atomic > 0n ? atomic.toString() : null
+interface Rates {
+  sol: string
+  usdc: string
+  asOf: string
 }
 
 export default function Payments() {
   const { user } = useAuth()
   const [amount, setAmount] = useState('')
-  const token: Token = 'USDC'
+  const token = 'USDC'
+  const [rate, setRate] = useState<string | null>(null)
+  const [rateError, setRateError] = useState(false)
   const [memo, setMemo] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
+  const [generatedPayment, setGeneratedPayment] = useState<{ amountNgn: string; tokenAmount: string } | null>(null)
   const [copied, setCopied] = useState(false)
+
+  useEffect(() => {
+    let active = true
+    const loadRate = async () => {
+      try {
+        const rates = await api<Rates>('/v1/rates')
+        if (active) {
+          setRate(rates.usdc)
+          setRateError(false)
+        }
+      } catch {
+        if (active) setRateError(true)
+      }
+    }
+    void loadRate()
+    const interval = window.setInterval(() => void loadRate(), 60_000)
+    return () => {
+      active = false
+      window.clearInterval(interval)
+    }
+  }, [])
+
+  const tokenEstimate = useMemo(() => {
+    const ngn = Number(amount)
+    const ngnPerToken = Number(rate)
+    return Number.isFinite(ngn) && ngn > 0 && Number.isFinite(ngnPerToken) && ngnPerToken > 0
+      ? (ngn / ngnPerToken).toFixed(6).replace(/0+$/, '').replace(/\.$/, '')
+      : null
+  }, [amount, rate])
 
   async function handleGenerate() {
     setError(null)
-    const amountAtomic = toAtomicAmount(amount, TOKEN_CONFIG[token].decimals)
-    if (!amountAtomic) {
-      setError(`Enter a positive amount with up to ${TOKEN_CONFIG[token].decimals} decimal places.`)
+    if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
+      setError('Enter a positive naira amount with up to two decimal places.')
+      return
+    }
+    if (!rate) {
+      setError('The live exchange rate is unavailable. Try again shortly.')
       return
     }
     if (!user?.address) {
@@ -59,14 +88,15 @@ export default function Payments() {
         method: 'POST',
         body: JSON.stringify({
           merchantRef: `INV-${Date.now()}`,
-          mint: TOKEN_CONFIG[token].mint,
-          amountAtomic,
+          token,
+          amount_ngn: amount,
           recipientAddress: user.address,
           receiveMode: 'public',
           memo: memo.trim() || 'Payment request',
         }),
       })
       if (!intent.id) throw new Error('The payment request was created without an ID.')
+      setGeneratedPayment({ amountNgn: intent.amount_ngn, tokenAmount: (Number(intent.amountAtomic) / 1e6).toString() })
       setGeneratedLink(new URL(`/pay/${intent.id}`, window.location.origin).toString())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the payment request.')
@@ -97,6 +127,7 @@ export default function Payments() {
           <p className="mx-auto mt-2 max-w-md text-sm text-foreground/65">
             Share this checkout link. Your customer does not need a Veil account, but will need to connect a Solana wallet.
           </p>
+          {generatedPayment && <Money amountNgn={generatedPayment.amountNgn} tokenAmount={generatedPayment.tokenAmount} token="USDC" className="mx-auto mt-4" primaryClassName="text-xl font-semibold text-primary" />}
           <div className="mx-auto mt-6 inline-flex rounded-xl border border-primary/10 bg-white p-3 shadow-sm">
             <QRCodeSVG value={generatedLink} size={176} level="M" includeMargin aria-label="QR code for payment link" />
           </div>
@@ -123,6 +154,7 @@ export default function Payments() {
             variant="secondary"
             onClick={() => {
               setGeneratedLink(null)
+              setGeneratedPayment(null)
               setAmount('')
               setMemo('')
               setError(null)
@@ -165,7 +197,7 @@ export default function Payments() {
 
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
-              <label htmlFor="payment-amount" className="text-sm font-medium">Amount</label>
+              <label htmlFor="payment-amount" className="text-sm font-medium">Amount (NGN)</label>
               <input
                 id="payment-amount"
                 type="number"
@@ -181,7 +213,7 @@ export default function Payments() {
             <div className="space-y-1.5">
               <span className="text-sm font-medium">Currency</span>
               <div className="flex h-11 items-center rounded-card border border-primary/15 bg-primary/5 px-3 font-medium text-primary">
-                USDC · {NETWORK_LABEL[NETWORK]}
+                NGN → USDC · {NETWORK_LABEL[NETWORK]}
               </div>
             </div>
           </div>
@@ -213,8 +245,15 @@ export default function Payments() {
           <h2 className="text-lg font-semibold text-primary">Summary</h2>
           <div className="flex flex-1 flex-col items-center justify-center py-8 text-center">
             <p className="text-sm text-foreground/60">Requesting</p>
-            <p className="my-2 break-all text-4xl font-semibold tracking-tight text-primary">
-              {amount || '0.00'} <span className="text-2xl text-primary/60">{token}</span>
+            <Money
+              amountNgn={amount && Number(amount) > 0 ? amount : 0}
+              tokenAmount={tokenEstimate}
+              token={token}
+              className="my-2 max-w-full break-all text-4xl font-semibold tracking-tight text-primary"
+              primaryClassName="text-4xl"
+            />
+            <p className="mt-1 text-xs text-foreground/50">
+              {rate ? 'Live estimate · rate locks when the request is created' : rateError ? 'Rate unavailable' : 'Loading live rate…'}
             </p>
             <p className="max-w-full break-words text-sm text-foreground/70">{memo.trim() || 'Payment request'}</p>
           </div>

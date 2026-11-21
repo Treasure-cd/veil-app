@@ -1,7 +1,8 @@
 import { useState } from 'react'
 import { Link } from 'react-router'
 import { motion, useScroll, useMotionValueEvent } from 'framer-motion'
-import Logo from './Logo'
+import Logo from '../Logo'
+import { OpenAppButton } from './OpenAppButton'
 
 const LINKS = [
   { label: 'How it works', href: '#how' },
@@ -25,7 +26,7 @@ export default function Navbar() {
         className="pointer-events-auto flex w-full items-center justify-between rounded-full border border-foreground/10 bg-white/70 py-2 pl-6 pr-6 shadow-[0_8px_32px_rgba(46,0,66,0.08)] backdrop-blur-xl"
       >
         <Link to="/" className="text-lg">
-          <Logo />
+          <Logo className="h-5" />
         </Link>
 
         <ul className="hidden items-center gap-1 md:flex" onMouseLeave={() => setHovered(null)}>
@@ -49,12 +50,7 @@ export default function Navbar() {
           ))}
         </ul>
 
-        <div
-          aria-disabled="true"
-          className="inline-flex h-10 cursor-default items-center rounded-lg bg-primary px-5 text-sm font-medium text-white opacity-60 shadow-[0_4px_16px_rgba(92,4,159,0.35)]"
-        >
-          Coming soon
-        </div>
+        <OpenAppButton className="inline-flex h-10 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
       </motion.nav>
     </div>
   )

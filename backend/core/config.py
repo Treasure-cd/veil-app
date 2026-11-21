@@ -15,7 +15,13 @@ class Settings(BaseSettings):
 
     PORT: int = Field(default=8000)
     DATABASE_URL_DEV: str = Field(...)
+    SQL_ECHO: bool = Field(default=False)
     SOLANA_RPC_URL: str = Field(default="https://api.devnet.solana.com")
+    SOLANA_NETWORK: str = Field(default="devnet")
+    USDC_MINT: str = Field(default="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
+    SOL_MINT: str = Field(default="So11111111111111111111111111111111111111112")
+    RATE_NGN_PER_SOL: float | None = Field(default=None)
+    RATE_NGN_PER_USDC: float | None = Field(default=None)
     
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173")
     

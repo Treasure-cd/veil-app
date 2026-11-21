@@ -7,7 +7,7 @@ import {
   CheckCircle,
   LockKey,
 } from '@phosphor-icons/react'
-import Logo from './Logo'
+import Logo from '../Logo'
 
 // Changed user kind to text so it's readable immediately without them having to guess what a voice note says
 type Msg =
@@ -151,7 +151,7 @@ export default function WhatsAppMockup() {
       {/* header */}
       <div className="flex items-center gap-3 bg-secondary px-4 py-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15">
-          <Logo className="text-[9px] !text-white" />
+          <Logo color="white" alt="" className="h-2" />
         </span>
         <div>
           <p className="mb-[3px] text-[13px] font-semibold leading-none text-white">Veil Bot</p>

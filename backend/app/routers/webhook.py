@@ -12,6 +12,7 @@ from app.models.user import User
 from app.models.payment import PaymentIntent
 from app.services.message_service import send_msg
 from app.services.merchant_service import create_merchant
+from core.config import settings
 
 router = APIRouter(
     prefix="/webhook",
@@ -184,7 +185,7 @@ async def whatsapp_webhook(
                 "'Invoice [amount] [currency] for [description]'\n\n"
                 "Example:\n"
                 "'Invoice 50 USDC for consulting'\n\n"
-                "Supported currencies: USDC, SOL, USDG.\n\n"
+                "Supported currencies: USDC, SOL.\n\n"
                 "Reply with 'reset' to change your wallet/business details."
             )
             await send_msg(phone_number, help_msg)
@@ -194,14 +195,14 @@ async def whatsapp_webhook(
         final_amount = parsed["amount"]
 
         # Determine mint and decimals
-        mint = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v" # Default USDC
+        mint = settings.USDC_MINT
         decimals = 6
         if target_currency == "SOL":
-            mint = "So11111111111111111111111111111111111111112"
+            mint = settings.SOL_MINT
             decimals = 9
         elif target_currency == "USDG":
-            mint = "USDG_MINT_ADDRESS_HERE"
-            decimals = 6
+            await send_msg(phone_number, "USDG payment requests are not currently supported.")
+            return {"status": "ok"}
 
         amount_atomic = str(int(round(final_amount * (10 ** decimals))))
 

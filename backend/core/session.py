@@ -7,11 +7,22 @@ from core.config import settings
 from typing import AsyncGenerator
 
 
-DEV_DB = settings.DATABASE_URL_DEV
+def get_database_url() -> str:
+    """Normalize Neon/Postgres URLs for SQLAlchemy's asyncpg driver."""
+    url = settings.DATABASE_URL_DEV
+    if url.startswith("postgres://"):
+        return url.replace("postgres://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://"):
+        return url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    return url
+
+
+DATABASE_URL = get_database_url()
 
 engine = create_async_engine(
-    DEV_DB,
-    echo=True
+    DATABASE_URL,
+    echo=settings.SQL_ECHO,
+    pool_pre_ping=True,
 )
 
 AsyncSessionLocal = async_sessionmaker(

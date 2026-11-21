@@ -1,4 +1,5 @@
 from sqlmodel import SQLModel, Field
+from sqlalchemy import Column, DateTime
 from uuid import uuid4, UUID
 from datetime import datetime, timezone
 from typing import Optional
@@ -13,6 +14,9 @@ class PaymentIntent(SQLModel, table=True):
     merchant_ref: str = Field(...)
     mint: str = Field(...)
     amount_atomic: str = Field(...)
+    amount_ngn: Optional[str] = Field(default=None)
+    rate_ngn_per_token: Optional[str] = Field(default=None)
+    expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     recipient_address: str = Field(...)
     receive_mode: str = Field(default="private")
     memo: Optional[str] = Field(default=None)

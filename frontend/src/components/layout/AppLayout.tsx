@@ -4,6 +4,7 @@ import { useAuth } from '../../auth/useAuth'
 import { BottomNav } from './BottomNav'
 import { Header } from './Header'
 import { Sidebar } from './Sidebar'
+import { DevnetNotice } from '../ui/DevnetNotice'
 
 export function AppLayout() {
   const { status } = useAuth()
@@ -18,6 +19,7 @@ export function AppLayout() {
 
       <div className={showAppNavigation ? 'md:pl-60' : undefined}>
         {!isLanding && <Header />}
+        {!isLanding && <DevnetNotice />}
         {isCheckout || isLanding ? (
           <Outlet />
         ) : (

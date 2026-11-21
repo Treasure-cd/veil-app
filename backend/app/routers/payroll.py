@@ -3,17 +3,19 @@ import json
 import logging
 from urllib.parse import urlsplit
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Optional, List
+from decimal import Decimal, ROUND_HALF_UP
 from core.config import settings
 from core.session import get_session
 from app.routers.dependencies import get_current_user
 from app.models.user import User
 from app.models.payroll import PayrollGroup, PayrollLink, utc_now_naive
+from app.services.rates import get_rates
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
 from solders.transaction_status import TransactionConfirmationStatus
@@ -37,13 +39,13 @@ def rpc_host() -> str:
 class AddRecipientRequest(BaseModel):
     name: str
     walletAddress: str
-    amountAtomic: Optional[str] = None
+    amountNgn: Optional[Decimal] = Field(default=None, gt=0, validation_alias=AliasChoices("amountNgn", "amount_ngn"))
     memo: Optional[str] = None
 
 class CreatePayrollGroupRequest(BaseModel):
     employerRef: str
     title: str
-    token: str # USDC or SOL
+    token: str = "SOL"
     releaseAt: str
     confirmationWindowHours: int = 2
     autoProceedAfterConfirmationWindow: bool = True
@@ -108,6 +110,7 @@ def format_recipient(r: dict) -> dict:
         "name": r.get("name"),
         "walletAddress": r.get("walletAddress"),
         "amountAtomic": r.get("amountAtomic"),
+        "amountNgn": r.get("amountNgn"),
         "memo": r.get("memo"),
         "registrationStatus": r.get("registrationStatus"),
         "createdAt": r.get("createdAt"),
@@ -134,6 +137,7 @@ def format_group(group: PayrollGroup) -> dict:
         "employerRef": group.employer_ref,
         "title": group.title,
         "token": group.token,
+        "rateNgnPerToken": group.rate_ngn_per_token,
         "settlementMode": group.settlement_mode,
         "confirmationWindowHours": group.confirmation_window_hours,
         "releaseAt": group.release_at.isoformat() + "Z" if isinstance(group.release_at, datetime) else group.release_at,
@@ -142,12 +146,23 @@ def format_group(group: PayrollGroup) -> dict:
         "recipients": [format_recipient(r) for r in recipients],
         "status": group.status,
         "totalAmountAtomic": str(total_amount),
+        "totalAmountNgn": format(sum((Decimal(str(r.get("amountNgn") or 0)) for r in recipients), Decimal(0)), "f"),
         "createdAt": group.created_at.isoformat() + "Z" if isinstance(group.created_at, datetime) else group.created_at,
         "updatedAt": group.updated_at.isoformat() + "Z" if isinstance(group.updated_at, datetime) else group.updated_at,
         "vaultSignature": group.vault_signature,
         "releaseSignature": group.release_signature,
         "failureReason": group.failure_reason
     }
+
+
+async def format_group_with_estimate(group: PayrollGroup) -> dict:
+    data = format_group(group)
+    if group.rate_ngn_per_token:
+        data["estimatedTotalSol"] = format(Decimal(data["totalAmountAtomic"]) / Decimal(10**9), "f")
+    else:
+        rate = (await get_rates())["sol"]
+        data["estimatedTotalSol"] = format(Decimal(data["totalAmountNgn"]) / rate, "f")
+    return data
 
 # --- Routes ---
 @router.post("/groups")
@@ -164,9 +179,10 @@ async def create_group(
                 "id": str(uuid4()),
                 "name": r.name,
                 "walletAddress": r.walletAddress,
-                "amountAtomic": r.amountAtomic,
+                "amountAtomic": None,
+                "amountNgn": str(r.amountNgn) if r.amountNgn is not None else None,
                 "memo": r.memo,
-                "registrationStatus": "submitted" if r.amountAtomic else "pending",
+                "registrationStatus": "submitted" if r.amountNgn else "pending",
                 "createdAt": now_str,
                 "updatedAt": now_str
             })
@@ -185,7 +201,7 @@ async def create_group(
         user_id=current_user.id,
         employer_ref=req.employerRef,
         title=req.title,
-        token=req.token,
+        token="SOL",
         # 3. Use the naive variables we just created
         release_at=release_at_naive,
         confirmation_window_hours=req.confirmationWindowHours,
@@ -200,7 +216,7 @@ async def create_group(
     db.add(group)
     await db.commit()
     await db.refresh(group)
-    return format_group(group)
+    return await format_group_with_estimate(group)
 
 @router.get("/groups")
 async def list_groups(
@@ -210,7 +226,7 @@ async def list_groups(
     stmt = select(PayrollGroup).where(PayrollGroup.user_id == current_user.id)
     res = await db.execute(stmt)
     groups = res.scalars().all()
-    return [format_group(g) for g in groups]
+    return [await format_group_with_estimate(g) for g in groups]
 
 @router.get("/groups/{group_id}")
 async def get_group(
@@ -230,7 +246,7 @@ async def get_group(
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
-    return format_group(group)
+    return await format_group_with_estimate(group)
 
 @router.post("/groups/{group_id}/recipients")
 async def add_recipient(
@@ -247,6 +263,9 @@ async def add_recipient(
     if not group:
         raise HTTPException(status_code=404, detail="group_not_found")
 
+    if group.status not in ("draft", "open"):
+        raise HTTPException(status_code=409, detail="Cannot add recipients after the vault is funded")
+
     try:
         recipients = json.loads(group.recipients_json)
     except Exception:
@@ -257,9 +276,10 @@ async def add_recipient(
         "id": str(uuid4()),
         "name": req.name,
         "walletAddress": req.walletAddress,
-        "amountAtomic": req.amountAtomic,
+        "amountAtomic": None,
+        "amountNgn": str(req.amountNgn) if req.amountNgn is not None else None,
         "memo": req.memo,
-        "registrationStatus": "submitted" if req.amountAtomic else "pending",
+        "registrationStatus": "submitted" if req.amountNgn else "pending",
         "createdAt": now_str,
         "updatedAt": now_str
     }
@@ -376,6 +396,24 @@ async def lock_vault(
     if not is_valid_tx:
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
+    rates = await get_rates()
+    rate = rates["sol"]
+    try:
+        recipients = json.loads(group.recipients_json)
+    except Exception:
+        recipients = []
+    for recipient in recipients:
+        ngn = recipient.get("amountNgn")
+        if ngn is None:
+            continue
+        value = Decimal(str(ngn))
+        if value <= 0:
+            raise HTTPException(status_code=400, detail="Recipient amountNgn must be positive")
+        recipient["amountAtomic"] = str(int((value / rate * Decimal(10**9)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+    group.recipients_json = json.dumps(recipients)
+    group.token = "SOL"
+    group.rate_ngn_per_token = str(rate)
+
     group.status = "locked"
     group.registration_link_open = False # Close registrations
     group.vault_signature = req.vaultSignature
@@ -384,7 +422,7 @@ async def lock_vault(
     db.add(group)
     await db.commit()
     await db.refresh(group)
-    return format_group(group)
+    return await format_group_with_estimate(group)
 
 @router.post("/groups/{group_id}/schedule")
 async def schedule_release(
@@ -410,7 +448,7 @@ async def schedule_release(
     db.add(group)
     await db.commit()
     await db.refresh(group)
-    return format_group(group)
+    return await format_group_with_estimate(group)
 
 @router.post("/groups/{group_id}/release")
 async def release_payroll(
@@ -443,4 +481,4 @@ async def release_payroll(
     db.add(group)
     await db.commit()
     await db.refresh(group)
-    return format_group(group)
+    return await format_group_with_estimate(group)

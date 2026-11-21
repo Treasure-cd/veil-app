@@ -1,12 +1,13 @@
 import { NavLink } from 'react-router'
 import { NAV_ITEMS } from './nav'
 import { motion } from 'framer-motion'
+import Logo from '../Logo'
 
 export function Sidebar() {
   return (
     <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-primary/10 bg-white md:flex">
       <div className="flex h-16 items-center px-6">
-        <span className="text-xl font-semibold tracking-tight text-primary">Veil</span>
+        <Logo className="h-5" />
       </div>
 
       <nav aria-label="Main" className="flex flex-col gap-1 px-3 py-4">

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo } from 'react'
+import React, { useState, useRef, useMemo, useEffect } from 'react'
 import Papa from 'papaparse'
 import { PublicKey } from '@solana/web3.js'
 import { useWallet } from '@solana/wallet-adapter-react'
@@ -10,9 +10,12 @@ import {
 import { Button } from '../components/ui/Button'
 import { api } from '../services/api'
 import { fundPayrollVault } from '../lib/umbra'
+import { Money } from '../components/ui/Money'
+
+interface Rates { sol: string; usdc: string; asOf: string }
 
 // --- Types ---
-type PayoutToken = 'USDC' | 'SOL'
+type PayoutToken = 'SOL'
 
 interface Recipient {
   id: string
@@ -32,6 +35,7 @@ interface ParsedCsvRow {
 interface PendingLock {
   groupId: string
   vaultSignature: string
+  quote: { rate: string; totalSol: string; recipients: Record<string, string> }
 }
 
 // --- Helpers ---
@@ -41,19 +45,29 @@ const isValidSolanaAddress = (address: string) => {
 
 const normalizeAmount = (raw: string) => raw.trim().replace(/[\s,$₦£€¥]/g, '')
 
-const isValidAmount = (amount: string, token: PayoutToken) => {
+const isValidAmount = (amount: string) => {
   if (!/^\d*\.?\d+$/.test(amount)) return false
-  const decimals = token === 'SOL' ? 9 : 6
-  if ((amount.split('.')[1] ?? '').length > decimals) return false
+  if ((amount.split('.')[1] ?? '').length > 2) return false
   const num = parseFloat(amount)
   return Number.isFinite(num) && num > 0
 }
 
-const toAtomicString = (amount: string, token: PayoutToken): string => {
-  const decimals = token === 'SOL' ? 9 : 6
-  const [whole = '0', frac = ''] = amount.split('.')
-  const paddedFrac = frac.padEnd(decimals, '0').slice(0, decimals)
-  return (BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(paddedFrac || '0')).toString()
+const toScaledInteger = (value: string, decimals: number): bigint => {
+  const [whole = '0', fraction = ''] = value.split('.')
+  return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0')
+}
+
+const ngnToLamports = (amountNgn: string, rateNgnPerSol: string): bigint => {
+  const kobo = toScaledInteger(amountNgn, 2)
+  const scaledRate = toScaledInteger(Number(rateNgnPerSol).toFixed(6), 6)
+  const denominator = scaledRate
+  return (kobo * 10_000_000_000_000n + denominator / 2n) / denominator
+}
+
+const lamportsToSol = (lamports: bigint): string => {
+  const whole = lamports / 1_000_000_000n
+  const fraction = (lamports % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '')
+  return fraction ? `${whole}.${fraction}` : whole.toString()
 }
 
 export default function Payroll() {
@@ -63,7 +77,9 @@ export default function Payroll() {
   // Local State
   const [payrollDate, setPayrollDate] = useState('')
   const [payrollTime, setPayrollTime] = useState('')
-  const [payrollToken, setPayrollToken] = useState<PayoutToken>('SOL')
+  const payrollToken: PayoutToken = 'SOL'
+  const [solRate, setSolRate] = useState<string | null>(null)
+  const [rateError, setRateError] = useState(false)
   const [recipients, setRecipients] = useState<Recipient[]>([
     { id: crypto.randomUUID(), name: '', address: '', amount: '' }
   ])
@@ -73,6 +89,7 @@ export default function Payroll() {
   const [statusMessage, setStatusMessage] = useState<string | null>(null)
   const [successGroupId, setSuccessGroupId] = useState<string | null>(null)
   const [pendingLock, setPendingLock] = useState<PendingLock | null>(null)
+  const [lockedQuote, setLockedQuote] = useState<PendingLock['quote'] | null>(null)
 
   // CSV State
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -84,6 +101,29 @@ export default function Payroll() {
     return recipients.reduce((sum, r) => sum + (parseFloat(r.amount) || 0), 0)
   }, [recipients])
   const csvValidCount = csvRows.filter(r => r.errors.length === 0).length
+
+  useEffect(() => {
+    let active = true
+    const loadRate = async () => {
+      try {
+        const rates = await api<Rates>('/v1/rates')
+        if (active) { setSolRate(rates.sol); setRateError(false) }
+      } catch {
+        if (active) setRateError(true)
+      }
+    }
+    void loadRate()
+    const interval = window.setInterval(() => void loadRate(), 60_000)
+    return () => { active = false; window.clearInterval(interval) }
+  }, [])
+
+  const estimateSol = useMemo(() => {
+    if (lockedQuote) return lockedQuote.totalSol
+    if (!solRate) return null
+    const lamports = recipients.reduce((sum, recipient) =>
+      sum + (isValidAmount(recipient.amount) ? ngnToLamports(recipient.amount, solRate) : 0n), 0n)
+    return lamportsToSol(lamports)
+  }, [lockedQuote, recipients, solRate])
 
   // --- Recipient Management ---
   const addRecipient = () => {
@@ -141,7 +181,7 @@ export default function Payroll() {
             if (!address) errors.push('Missing address')
             else if (!isValidSolanaAddress(address)) errors.push('Invalid address')
             if (!amount) errors.push('Missing amount')
-            else if (!isValidAmount(amount, payrollToken)) errors.push(`Amount must be positive with at most ${payrollToken === 'SOL' ? 9 : 6} decimal places`)
+            else if (!isValidAmount(amount)) errors.push('Amount must be positive with at most 2 decimal places in NGN')
 
             return { rowNumber: index + 2, name, address, amount, errors }
           })
@@ -191,8 +231,9 @@ export default function Payroll() {
     const filledRecipients = recipients.filter(r => r.name.trim() || r.address.trim() || parseFloat(r.amount) > 0)
     if (filledRecipients.length === 0) { setError('Add at least one recipient.'); return }
 
-    const invalid = filledRecipients.find(r => !r.name.trim() || !isValidSolanaAddress(r.address) || !isValidAmount(r.amount.trim(), payrollToken))
+    const invalid = filledRecipients.find(r => !r.name.trim() || !isValidSolanaAddress(r.address) || !isValidAmount(r.amount.trim()))
     if (invalid) { setError('One or more recipients have invalid details.'); return }
+    if (!solRate) { setError('The live SOL/NGN rate is unavailable. Try again shortly.'); return }
 
     const releaseAt = new Date(`${payrollDate}T${payrollTime}`)
     if (!Number.isFinite(releaseAt.getTime())) { setError('Please enter a valid release date and time.'); return }
@@ -206,9 +247,17 @@ export default function Payroll() {
       const formattedRecipients = filledRecipients.map(r => ({
         name: r.name.trim(),
         walletAddress: r.address.trim(),
-        amountAtomic: toAtomicString(r.amount.trim(), payrollToken),
+        amountNgn: r.amount.trim(),
       }))
-      const totalAtomic = formattedRecipients.reduce((sum, r) => sum + BigInt(r.amountAtomic), 0n)
+      const totalAtomic = filledRecipients.reduce((sum, r) => sum + ngnToLamports(r.amount.trim(), solRate), 0n)
+      const quote = {
+        rate: solRate,
+        totalSol: lamportsToSol(totalAtomic),
+        recipients: Object.fromEntries(filledRecipients.map((r) => [
+          r.id,
+          lamportsToSol(ngnToLamports(r.amount.trim(), solRate)),
+        ])),
+      }
 
       vaultSignature = await fundPayrollVault({
         wallet,
@@ -232,7 +281,7 @@ export default function Payroll() {
         }),
       })
       createdGroupId = group.id
-      setPendingLock({ groupId: group.id, vaultSignature })
+      setPendingLock({ groupId: group.id, vaultSignature, quote })
 
       setStatusMessage('Verifying transaction on-chain...')
       await api(`/v1/payroll/groups/${group.id}/lock`, {
@@ -240,6 +289,7 @@ export default function Payroll() {
         body: JSON.stringify({ vaultSignature }),
       })
       setSuccessGroupId(group.id)
+      setLockedQuote(quote)
       setPendingLock(null)
       setStatusMessage(null)
     } catch (err) {
@@ -272,6 +322,7 @@ export default function Payroll() {
         })
       }
       setSuccessGroupId(pendingLock.groupId)
+      setLockedQuote(pendingLock.quote)
       setPendingLock(null)
       setStatusMessage(null)
       setError(null)
@@ -311,23 +362,9 @@ export default function Payroll() {
 
             <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
               <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground/70">Payout Token</label>
-                <div className="flex h-10 items-center rounded-lg bg-primary/5 p-1">
-                  {(['USDC', 'SOL'] as PayoutToken[]).map((t) => (
-                    <button
-                      key={t}
-                      disabled={t === 'USDC'}
-                      title={t === 'USDC' ? 'Umbra devnet currently supports SOL only' : undefined}
-                      onClick={() => setPayrollToken(t)}
-                      className={`flex-1 rounded-md text-sm font-medium transition-colors ${
-                        payrollToken === t ? 'bg-white text-primary shadow-sm' : 'text-foreground/60 hover:text-foreground'
-                      } disabled:cursor-not-allowed disabled:opacity-50`}
-                    >
-                      {t}
-                    </button>
-                  ))}
-                </div>
-                <span className="text-xs text-foreground/50">Umbra devnet currently supports SOL only.</span>
+                <label className="text-sm font-medium text-foreground/70">Payout currency</label>
+                <div className="flex h-10 items-center rounded-lg bg-primary/5 px-3 text-sm font-medium text-primary">SOL · amounts entered in NGN</div>
+                <span className="text-xs text-foreground/50">SOL amount is estimated live and fixed when funded.</span>
               </div>
               <div className="flex flex-col gap-1.5">
                 <label className="text-sm font-medium text-foreground/70">Release Date</label>
@@ -385,7 +422,7 @@ export default function Payroll() {
                     <div key={row.rowNumber} title={row.errors.join(', ') || undefined} className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
                       {row.errors.length ? <WarningCircle className="text-red-500" /> : <CheckCircle className="text-emerald-500" />}
                       <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
-                      <span className="shrink-0 text-right font-mono text-xs text-emerald-800">{row.amount}</span>
+                      <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800" />
                       {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600">{row.errors.join(', ')}</span>}
                     </div>
                   ))}
@@ -420,12 +457,21 @@ export default function Payroll() {
                     <input
                       type="text"
                       inputMode="decimal"
-                      placeholder="Amount"
-                      aria-label={`Recipient ${index + 1} amount in ${payrollToken}`}
+                      placeholder="Amount (₦)"
+                      aria-label={`Recipient ${index + 1} amount in NGN`}
                       value={recipient.amount}
                       onChange={(e) => updateRecipient(recipient.id, 'amount', e.target.value)}
                       className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
                     />
+                {(lockedQuote?.recipients[recipient.id] || (solRate && isValidAmount(recipient.amount))) && (
+                      <Money
+                        amountNgn={recipient.amount}
+                        tokenAmount={lockedQuote?.recipients[recipient.id] ?? (solRate ? lamportsToSol(ngnToLamports(recipient.amount, solRate)) : null)}
+                        token="SOL"
+                        className="min-w-24 text-right"
+                        primaryClassName="text-xs"
+                      />
+                    )}
                     <button
                       onClick={() => removeRecipient(recipient.id)}
                       aria-label={`Remove recipient ${index + 1}`}
@@ -469,10 +515,12 @@ export default function Payroll() {
               <div className="flex items-end justify-between">
                 <span className="text-sm font-medium text-foreground/70">Total Funding</span>
                 <div className="text-right">
-                  <div className="text-3xl font-bold tracking-tight text-primary">{total.toLocaleString('en-US', { minimumFractionDigits: 2 })}</div>
-                  <div className="text-sm font-semibold text-primary/60">{payrollToken}</div>
+                  <Money amountNgn={total} tokenAmount={estimateSol} token="SOL" align="right" primaryClassName="text-3xl font-bold tracking-tight text-primary" />
                 </div>
               </div>
+              <p className="mt-2 text-right text-xs text-foreground/50">
+                {lockedQuote ? `Locked funding rate · ₦${Number(lockedQuote.rate).toLocaleString('en-NG')} per SOL` : solRate ? `Live rate · ₦${Number(solRate).toLocaleString('en-NG')} per SOL` : rateError ? 'Live rate unavailable' : 'Loading live rate…'}
+              </p>
             </div>
 
             {!publicKey ? (

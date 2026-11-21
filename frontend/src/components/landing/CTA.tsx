@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { OpenAppButton } from './OpenAppButton'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -67,12 +68,7 @@ export default function CTA() {
             transition={{ delay: 0.6, duration: 0.6, ease }}
             className="inline-block"
           >
-            <div
-              aria-disabled="true"
-              className="inline-flex h-14 cursor-default items-center gap-2 rounded-lg bg-white px-9 text-sm font-semibold text-secondary opacity-60 shadow-[0_0_60px_rgba(255,255,255,0.25)]"
-            >
-              Coming soon
-            </div>
+            <OpenAppButton className="inline-flex h-14 items-center gap-2 rounded-lg bg-white px-9 text-sm font-semibold text-secondary shadow-veil-md transition-colors hover:bg-white/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white" />
           </motion.div>
         </div>
       </motion.div>

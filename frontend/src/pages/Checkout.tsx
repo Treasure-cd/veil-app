@@ -15,6 +15,7 @@ import { truncateAddress } from '../lib/format'
 import { api } from '../services/api'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '../components/ui/Button'
+import { Money } from '../components/ui/Money'
 import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, USDC_MINT } from '../lib/network'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -30,11 +31,15 @@ interface InvoiceData {
   merchantRef: string
   mint: string
   amountAtomic: string
+  amount_ngn?: string | null
+  rate_ngn_per_token?: string | null
+  expires_at?: string | null
   recipientAddress: string
   receiveMode: string
   memo: string | null
   status: string
   fundSignature?: string | null
+  failureReason?: string | null
 }
 
 async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -137,6 +142,7 @@ export default function Checkout() {
   >(null)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
+  const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
 
   useEffect(() => {
     let active = true
@@ -164,6 +170,17 @@ export default function Checkout() {
       active = false
     }
   }, [id])
+
+  useEffect(() => {
+    if (!invoice?.expires_at || invoice.status !== 'created') return
+    const updateRemaining = () => {
+      const seconds = Math.max(0, Math.ceil((new Date(invoice.expires_at as string).getTime() - Date.now()) / 1000))
+      setRemainingSeconds(seconds)
+    }
+    updateRemaining()
+    const interval = window.setInterval(updateRemaining, 1000)
+    return () => window.clearInterval(interval)
+  }, [invoice?.expires_at, invoice?.status])
 
   useEffect(() => {
     if (!pendingConnect || !wallet || connected || connecting) return
@@ -404,7 +421,10 @@ export default function Checkout() {
         errorMessage: message,
         stack: err instanceof Error ? err.stack : undefined,
       })
-      setPaymentError(`${paymentPhase}: ${message}`)
+      const walletNetworkHint = /network|cluster|blockhash|transaction version|failed to send/i.test(message)
+        ? ` Check that your wallet is set to ${NETWORK_LABEL[NETWORK]} and try again.`
+        : ''
+      setPaymentError(`${paymentPhase}: ${message}${walletNetworkHint}`)
     } finally {
       setPaying(false)
     }
@@ -460,6 +480,10 @@ export default function Checkout() {
   }
 
   const displayAmount = formatAmount(invoice.amountAtomic, token.decimals)
+  const expired = invoice.status === 'failed' || invoice.failureReason === 'expired' || (remainingSeconds !== null && remainingSeconds <= 0)
+  const countdown = remainingSeconds === null
+    ? null
+    : `${Math.floor(remainingSeconds / 60).toString().padStart(2, '0')}:${(remainingSeconds % 60).toString().padStart(2, '0')}`
 
   const isOwner = user !== null && invoice.userId === user.id
 
@@ -474,7 +498,7 @@ export default function Checkout() {
         </div>
         <h1 className="mt-5 text-2xl font-semibold tracking-tight text-primary">Payment complete</h1>
         <p className="mt-2 text-sm text-foreground/65">
-          {displayAmount} {token.symbol} paid for “{invoice.memo || 'Payment request'}”.
+          <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="inline-flex align-middle" /> paid for “{invoice.memo || 'Payment request'}”.
         </p>
         {(confirmedSignature || invoice.fundSignature) && (
           <a
@@ -503,7 +527,7 @@ export default function Checkout() {
           Private payment received
         </h1>
         <p className="mt-2 text-sm text-foreground/65">
-          {displayAmount} {token.symbol} is awaiting withdrawal from the private receiving address.
+          <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="align-middle" /> is awaiting withdrawal from the private receiving address.
         </p>
         {isOwner ? (
           <div className="mt-6 space-y-3 text-left">
@@ -545,6 +569,17 @@ export default function Checkout() {
     )
   }
 
+  if (expired && !pendingTransaction) {
+    return (
+      <CheckoutFrame>
+        <WarningCircle size={42} className="mx-auto text-amber-500" weight="fill" />
+        <h1 className="mt-4 text-2xl font-semibold text-primary">Quote expired</h1>
+        <p className="mt-2 text-sm text-foreground/65">This 30-minute payment quote has expired. Ask the merchant for a new payment link.</p>
+        <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="mx-auto mt-4" primaryClassName="text-xl font-semibold text-primary" />
+      </CheckoutFrame>
+    )
+  }
+
   if (invoice.status !== 'created') {
     return (
       <CheckoutFrame>
@@ -563,10 +598,15 @@ export default function Checkout() {
         <Wallet size={24} weight="fill" />
       </div>
       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Secure checkout</p>
-      <p className="mt-2 text-4xl font-semibold tracking-tight text-primary">
-        {displayAmount} <span className="text-2xl text-primary/60">{token.symbol}</span>
-      </p>
+      <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="mx-auto mt-2" primaryClassName="text-4xl font-semibold tracking-tight text-primary" secondaryClassName="text-sm" />
       <p className="mt-2 text-sm text-foreground/65">{invoice.memo || 'Payment request'}</p>
+
+      {countdown && (
+        <p className={`mt-3 rounded-pill px-3 py-1.5 text-xs font-medium tabular-nums ${expired ? 'bg-amber-50 text-amber-800' : 'bg-primary/5 text-primary/70'}`} role="timer">
+          {expired ? 'Quote expired' : `Locked quote expires in ${countdown}`}
+          {expired && pendingTransaction ? ' · confirm your submitted transfer below' : ''}
+        </p>
+      )}
 
       <div className="my-6 rounded-card border border-primary/10 bg-background p-4 text-left">
         <div className="flex items-start gap-2 text-sm text-foreground/70">
@@ -611,8 +651,9 @@ export default function Checkout() {
           <p className="text-xs text-foreground/55">
             Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
           </p>
-          <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()}>
-            {pendingTransaction ? 'Retry payment confirmation' : `Pay ${displayAmount} ${token.symbol}`}
+          <p className="text-xs text-foreground/45">This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.</p>
+          <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()} disabled={expired && !pendingTransaction}>
+            {pendingTransaction ? 'Retry payment confirmation' : 'Pay now'}
           </Button>
         </div>
       ) : installedWallets.length > 0 ? (

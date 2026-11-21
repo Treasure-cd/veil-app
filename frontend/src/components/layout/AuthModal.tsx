@@ -6,6 +6,7 @@ import type { SignInStep } from '../../auth/auth.types'
 import { truncateAddress } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
 import { ConnectWalletButton } from '../../auth/ConnectWalletButton'
+import { NETWORK_LABEL, NETWORK } from '../../lib/network'
 
 interface AuthModalProps {
   open: boolean
@@ -93,7 +94,7 @@ export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps
           <p className="text-foreground/70">
             {address
               ? 'Wallet connected. Sign a message to confirm it’s yours. It’s free and doesn’t move any funds.'
-              : 'Connect your Solana wallet to access your dashboard.'}
+              : `Connect your Solana wallet to access Veil. Set the wallet network to ${NETWORK_LABEL[NETWORK]} while using the ${NETWORK_LABEL[NETWORK]} app.`}
           </p>
         </div>
 

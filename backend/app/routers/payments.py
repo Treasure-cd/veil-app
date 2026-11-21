@@ -2,18 +2,21 @@ import asyncio
 import logging
 import base58
 from fastapi import APIRouter, Depends, HTTPException
-from pydantic import BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import select
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import Optional, Literal
+from decimal import Decimal, ROUND_HALF_UP
+from datetime import timedelta
 from core.config import settings
 from core.session import get_session
 from app.routers.dependencies import get_current_user, get_optional_user
 from app.models.user import User
 from app.models.payment import PaymentIntent, utc_now
+from app.services.rates import get_rates
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
@@ -28,13 +31,13 @@ logger = logging.getLogger(__name__)
 
 class CreatePaymentIntentRequest(BaseModel):
     merchantRef: str
-    mint: str
-    amountAtomic: str
+    token: Literal["USDC", "SOL"]
+    amount_ngn: Decimal = Field(validation_alias=AliasChoices("amount_ngn", "amountNgn"))
     recipientAddress: str
     receiveMode: Literal["private", "public"] = "private"
     memo: Optional[str] = None
 
-    @field_validator("mint", "recipientAddress")
+    @field_validator("recipientAddress")
     @classmethod
     def validate_pubkey(cls, v: str):
         try:
@@ -43,11 +46,11 @@ class CreatePaymentIntentRequest(BaseModel):
             raise ValueError("Invalid Solana address") from exc
         return v
 
-    @field_validator("amountAtomic")
+    @field_validator("amount_ngn")
     @classmethod
-    def validate_amount(cls, v: str):
-        if not v.isdigit() or int(v) <= 0:
-            raise ValueError("Amount must be a positive number")
+    def validate_amount(cls, v: Decimal):
+        if not v.is_finite() or v <= 0:
+            raise ValueError("amount_ngn must be a positive number")
         return v
 
 class ConfirmFundRequest(BaseModel):
@@ -68,6 +71,10 @@ def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
         "merchantRef": intent.merchant_ref,
         "mint": intent.mint,
         "amountAtomic": intent.amount_atomic,
+        "amount_ngn": intent.amount_ngn,
+        "amount_token": None,
+        "rate_ngn_per_token": intent.rate_ngn_per_token,
+        "expires_at": intent.expires_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if intent.expires_at else None,
         "recipientAddress": intent.recipient_address,
         "receiveMode": intent.receive_mode,
         "memo": intent.memo,
@@ -84,6 +91,7 @@ def format_intent(intent: PaymentIntent, is_owner: bool = True) -> dict:
             "claimSignature": intent.claim_signature,
             "failureReason": intent.failure_reason
         })
+    data["amount_token"] = format(Decimal(intent.amount_atomic) / Decimal(10 ** (9 if intent.mint != settings.USDC_MINT else 6)), "f")
     return data
 
 async def verify_transfer(
@@ -94,6 +102,7 @@ async def verify_transfer(
     after: datetime,
     direction: Literal["in", "out"] = "in",
     expected_memo: str | None = None,
+    before: datetime | None = None,
 ) -> bool:
     try:
         sig = Signature.from_string(signature_str)
@@ -136,6 +145,11 @@ async def verify_transfer(
         if tx.block_time < created_ts - 60:
             logger.warning("transaction predates intent for signature %s", signature_str)
             return False
+        if before is not None:
+            expiry_utc = before.replace(tzinfo=timezone.utc) if before.tzinfo is None else before.astimezone(timezone.utc)
+            if tx.block_time >= expiry_utc.timestamp():
+                logger.warning("transaction occurred after intent expiry for signature %s", signature_str)
+                return False
 
         if expected_memo is not None:
             instructions = tx.transaction.transaction.message.instructions
@@ -193,11 +207,22 @@ async def create_intent(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
+    rates = await get_rates()
+    rate = rates["usdc" if req.token == "USDC" else "sol"]
+    decimals = 6 if req.token == "USDC" else 9
+    atomic = int((req.amount_ngn / rate * (Decimal(10) ** decimals)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
+    if atomic < 1:
+        raise HTTPException(status_code=400, detail="amount_ngn is below the smallest supported token amount")
+    now = utc_now()
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
     intent = PaymentIntent(
         user_id=current_user.id,
         merchant_ref=req.merchantRef,
-        mint=req.mint,
-        amount_atomic=req.amountAtomic,
+        mint=settings.USDC_MINT if req.token == "USDC" else settings.SOL_MINT,
+        amount_atomic=str(atomic),
+        amount_ngn=str(req.amount_ngn),
+        rate_ngn_per_token=str(rate),
+        expires_at=expires_at,
         recipient_address=req.recipientAddress,
         receive_mode=req.receiveMode,
         memo=req.memo,
@@ -223,6 +248,14 @@ async def get_intent(
     if not intent:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
+    expiry_utc = intent.expires_at.replace(tzinfo=timezone.utc) if intent.expires_at and intent.expires_at.tzinfo is None else intent.expires_at
+    if intent.status == "created" and expiry_utc and datetime.now(timezone.utc) >= expiry_utc:
+        intent.status = "failed"
+        intent.failure_reason = "expired"
+        intent.updated_at = utc_now()
+        await db.commit()
+        await db.refresh(intent)
+
     is_owner = current_user is not None and intent.user_id == current_user.id
     return format_intent(intent, is_owner=is_owner)
 
@@ -245,8 +278,11 @@ async def confirm_fund(
     if not intent:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
-    if intent.status != "created":
+    expired_candidate = intent.status == "failed" and intent.failure_reason == "expired"
+    if intent.status != "created" and not expired_candidate:
         raise HTTPException(status_code=409, detail="Payment has already been funded or claimed.")
+
+    expiry_utc = intent.expires_at.replace(tzinfo=timezone.utc) if intent.expires_at and intent.expires_at.tzinfo is None else intent.expires_at
 
     duplicate = await db.execute(
         select(PaymentIntent.id).where(
@@ -263,11 +299,18 @@ async def confirm_fund(
         intent.amount_atomic,
         intent.created_at,
         expected_memo=f"veil:{intent.id}",
+        before=intent.expires_at,
     )
     if not is_valid_tx:
+        if expiry_utc and datetime.now(timezone.utc) >= expiry_utc:
+            intent.status = "failed"
+            intent.failure_reason = "expired"
+            intent.updated_at = utc_now()
+            await db.commit()
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
     intent.status = "funded"
+    intent.failure_reason = None
     intent.fund_signature = req.signature
     intent.updated_at = utc_now()
 

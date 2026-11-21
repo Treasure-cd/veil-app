@@ -13,8 +13,8 @@ function App() {
   return (
     <MotionConfig reducedMotion="user">
       <Routes>
-        <Route path="/" element={<Landing />} />
         <Route element={<AppProviders />}>
+          <Route path="/" element={<Landing />} />
           <Route element={<AppLayout />}>
             <Route path="/app" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
