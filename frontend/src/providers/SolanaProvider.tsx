@@ -8,7 +8,7 @@ import { NETWORK, SOLANA_RPC_URL } from '../lib/network'
 const ENDPOINT =
   SOLANA_RPC_URL || clusterApiUrl(NETWORK)
 const WS_ENDPOINT =
-  (import.meta.env.VITE_SOLANA_WS_URL as string | undefined) ||
+  process.env.SOLANA_WS_URL ||
   ENDPOINT.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
 
 const WALLETS: Adapter[] = []

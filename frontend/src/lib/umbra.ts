@@ -10,7 +10,7 @@ import { NETWORK, SOLANA_RPC_URL } from './network'
 
 const DEVNET_RPC_URL = SOLANA_RPC_URL || clusterApiUrl(NETWORK)
 const DEVNET_WS_URL =
-  import.meta.env.VITE_SOLANA_WS_URL || DEVNET_RPC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
+  process.env.SOLANA_WS_URL || DEVNET_RPC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
 
 // Umbra devnet currently supports wSOL only.
 export const UMBRA_DEVNET_MINTS: Record<string, Address> = {

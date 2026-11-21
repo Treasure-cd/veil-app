@@ -1,6 +1,6 @@
 export type Network = 'mainnet-beta' | 'devnet'
 
-const configuredNetwork = (import.meta.env.VITE_SOLANA_NETWORK as string | undefined)?.toLowerCase()
+const configuredNetwork = process.env.SOLANA_NETWORK?.toLowerCase()
 export const NETWORK: Network = configuredNetwork === 'mainnet-beta' || configuredNetwork === 'mainnet'
   ? 'mainnet-beta'
   : 'devnet'
@@ -11,11 +11,10 @@ const USDC_MINTS: Record<Network, string> = {
 }
 
 export const USDC_MINT =
-  (import.meta.env.VITE_SOLANA_USDC_MINT as string | undefined) ||
-  (import.meta.env.VITE_USDC_MINT as string | undefined) ||
+  process.env.SOLANA_USDC_MINT ||
   USDC_MINTS[NETWORK]
 
-export const SOLANA_RPC_URL = (import.meta.env.VITE_SOLANA_RPC_URL as string | undefined) || undefined
+export const SOLANA_RPC_URL = process.env.SOLANA_RPC_URL || undefined
 
 export const SOLANA_GENESIS_HASH: Record<Network, string> = {
   devnet: 'EtWTRABZaYq6iMfeYKouRu166VU2xqa1wcaWoxPkrZBG',

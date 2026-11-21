@@ -29,7 +29,7 @@ Work page by page and list what you changed on each. Keep changes targeted; don'
 
 Prepare the app for public use on Solana devnet.
 
-1. Read the network, RPC URL and USDC mint from env vars (VITE_ prefixed on the frontend) so the same build can be switched to mainnet later without code changes.
+1. Read the network, RPC URL and USDC mint from env vars on the frontend so the same build can be switched to mainnet later without code changes.
 2. Show a clear but unobtrusive "Devnet" badge in the header and a one-time dismissible notice explaining that devnet tokens have no real value, with a link to the Solana faucet.
 3. Make sure the wallet adapter is configured for devnet and shows a helpful message if the user's wallet is on the wrong network.
 4. Landing page: replace the "Coming soon" button with "Open app", which opens the sign-in modal or goes to /payments if there is already a session.

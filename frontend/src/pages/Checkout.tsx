@@ -230,7 +230,7 @@ export default function Checkout() {
             errorType: rpcError instanceof Error ? rpcError.name : typeof rpcError,
           })
           throw new Error(
-            `Could not reach the configured Solana RPC (${rpcEndpoint}). Check VITE_SOLANA_RPC_URL and try again.`,
+            `Could not reach the configured Solana RPC (${rpcEndpoint}). Check SOLANA_RPC_URL and try again.`,
           )
         }
         if (genesisHash !== SOLANA_GENESIS_HASH[NETWORK]) {
@@ -241,7 +241,7 @@ export default function Checkout() {
             expectedGenesisHash: SOLANA_GENESIS_HASH[NETWORK],
           })
           throw new Error(
-            `The configured Solana RPC is connected to a different cluster than ${NETWORK_LABEL[NETWORK]}. Check VITE_SOLANA_NETWORK and VITE_SOLANA_RPC_URL.`,
+            `The configured Solana RPC is connected to a different cluster than ${NETWORK_LABEL[NETWORK]}. Check SOLANA_NETWORK and SOLANA_RPC_URL.`,
           )
         }
         const amount = BigInt(invoice.amountAtomic)

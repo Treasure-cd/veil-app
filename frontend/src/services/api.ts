@@ -1,5 +1,5 @@
 const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? 'http://localhost:8000'
+  process.env.API_URL || 'http://localhost:8000'
 
 export class ApiError extends Error {
   status: number
