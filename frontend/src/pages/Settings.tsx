@@ -1,6 +1,271 @@
-const Settings = () => {
+import { useCallback, useEffect, useRef, useState } from 'react'
+import { CheckCircle, Clock, WhatsappLogo, X } from '@phosphor-icons/react'
+import { api } from '../services/api'
+import { Button } from '../components/ui/Button'
+
+interface WhatsAppStatus {
+  linked: boolean
+  phone_masked: string | null
+}
+
+interface LinkCodeResponse {
+  code: string
+  expires_at: string
+  join_url: string
+  link_url: string
+}
+
+function formatCountdown(seconds: number) {
+  const minutes = Math.floor(seconds / 60).toString().padStart(2, '0')
+  const remainder = (seconds % 60).toString().padStart(2, '0')
+  return `${minutes}:${remainder}`
+}
+
+function Settings() {
+  const dialogRef = useRef<HTMLDialogElement>(null)
+  const [status, setStatus] = useState<WhatsAppStatus | null>(null)
+  const [statusLoading, setStatusLoading] = useState(true)
+  const [statusError, setStatusError] = useState<string | null>(null)
+  const [linkInfo, setLinkInfo] = useState<LinkCodeResponse | null>(null)
+  const [linkDialogOpen, setLinkDialogOpen] = useState(false)
+  const [linkStep, setLinkStep] = useState<'waiting' | 'success'>('waiting')
+  const [linkLoading, setLinkLoading] = useState(false)
+  const [unlinking, setUnlinking] = useState(false)
+  const [linkError, setLinkError] = useState<string | null>(null)
+  const [now, setNow] = useState(Date.now())
+
+  const refreshStatus = useCallback(async () => {
+    try {
+      const next = await api<WhatsAppStatus>('/v1/whatsapp/status')
+      setStatus(next)
+      setStatusError(null)
+      if (next.linked && linkDialogOpen) setLinkStep('success')
+      return next
+    } catch (error) {
+      setStatusError(error instanceof Error ? error.message : 'Could not load WhatsApp status.')
+      return null
+    } finally {
+      setStatusLoading(false)
+    }
+  }, [linkDialogOpen])
+
+  useEffect(() => {
+    void refreshStatus()
+  }, [refreshStatus])
+
+  useEffect(() => {
+    if (!linkDialogOpen) return
+    void refreshStatus()
+    const interval = window.setInterval(() => void refreshStatus(), 3000)
+    return () => window.clearInterval(interval)
+  }, [linkDialogOpen, refreshStatus])
+
+  useEffect(() => {
+    if (!linkDialogOpen || linkStep !== 'success') return
+    const timeout = window.setTimeout(() => setLinkDialogOpen(false), 1800)
+    return () => window.clearTimeout(timeout)
+  }, [linkDialogOpen, linkStep])
+
+  const expiresAt = linkInfo ? Date.parse(linkInfo.expires_at) : null
+  const secondsRemaining = expiresAt === null
+    ? 0
+    : Math.max(0, Math.ceil((expiresAt - now) / 1000))
+
+  useEffect(() => {
+    if (!linkDialogOpen || expiresAt === null) return
+    setNow(Date.now())
+    const interval = window.setInterval(() => setNow(Date.now()), 1000)
+    return () => window.clearInterval(interval)
+  }, [expiresAt, linkDialogOpen])
+
+  useEffect(() => {
+    const dialog = dialogRef.current
+    if (!dialog) return
+    if (linkDialogOpen && !dialog.open) dialog.showModal()
+    if (!linkDialogOpen && dialog.open) dialog.close()
+  }, [linkDialogOpen])
+
+  async function issueLinkCode() {
+    setLinkLoading(true)
+    setLinkError(null)
+    try {
+      const response = await api<LinkCodeResponse>('/v1/whatsapp/link-code', { method: 'POST' })
+      setLinkInfo(response)
+      setLinkStep('waiting')
+      setNow(Date.now())
+      setLinkDialogOpen(true)
+    } catch (error) {
+      setLinkError(error instanceof Error ? error.message : 'Could not create a WhatsApp link code.')
+    } finally {
+      setLinkLoading(false)
+    }
+  }
+
+  async function unlinkWhatsApp() {
+    setUnlinking(true)
+    setLinkError(null)
+    try {
+      await api<{ ok: boolean }>('/v1/whatsapp/link', { method: 'DELETE' })
+      await refreshStatus()
+    } catch (error) {
+      setLinkError(error instanceof Error ? error.message : 'Could not unlink WhatsApp.')
+    } finally {
+      setUnlinking(false)
+    }
+  }
+
   return (
-    <div>Settings</div>
+    <div className="mx-auto max-w-3xl space-y-6">
+      <header>
+        <h1 className="text-3xl font-semibold tracking-tight text-primary">Settings</h1>
+        <p className="mt-1 text-sm text-foreground/60">Manage your account connections.</p>
+      </header>
+
+      <section aria-labelledby="whatsapp-settings-title" className="rounded-panel border border-primary/10 bg-white p-5 sm:p-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="flex min-w-0 items-start gap-3">
+            <span className="flex size-11 shrink-0 items-center justify-center rounded-card bg-primary/10 text-primary">
+              <WhatsappLogo size={24} weight="fill" aria-hidden="true" />
+            </span>
+            <div className="min-w-0">
+              <h2 id="whatsapp-settings-title" className="font-semibold text-primary">WhatsApp</h2>
+              <p className="mt-1 text-sm text-foreground/60">
+                {statusLoading
+                  ? 'Checking connection…'
+                  : status?.linked
+                    ? `Connected · ${status.phone_masked ?? 'WhatsApp'}`
+                    : 'Not connected'}
+              </p>
+            </div>
+          </div>
+          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+            {status?.linked ? (
+              <Button variant="secondary" size="sm" loading={unlinking} onClick={() => void unlinkWhatsApp()}>
+                Unlink
+              </Button>
+            ) : (
+              <Button size="sm" loading={linkLoading} disabled={statusLoading} onClick={() => void issueLinkCode()}>
+                Connect WhatsApp
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {statusError && (
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card bg-red-50 px-4 py-3">
+            <p role="alert" className="text-sm text-red-700">{statusError}</p>
+            <button type="button" className="text-sm font-medium text-red-700 underline" onClick={() => void refreshStatus()}>
+              Try again
+            </button>
+          </div>
+        )}
+        {linkError && !linkDialogOpen && (
+          <p role="alert" className="mt-3 text-sm text-red-700">{linkError}</p>
+        )}
+      </section>
+
+      <dialog
+        ref={dialogRef}
+        aria-labelledby="whatsapp-link-title"
+        onCancel={(event) => {
+          event.preventDefault()
+          setLinkDialogOpen(false)
+        }}
+        onClose={() => setLinkDialogOpen(false)}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) setLinkDialogOpen(false)
+        }}
+        className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-panel bg-white p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-panel"
+      >
+        <div className="p-5 sm:p-7">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 id="whatsapp-link-title" className="text-xl font-semibold text-primary">
+                {linkStep === 'success' ? 'WhatsApp connected' : 'Connect WhatsApp'}
+              </h2>
+              <p className="mt-1 text-sm text-foreground/60">
+                {linkStep === 'success'
+                  ? `Your account is connected${status?.phone_masked ? ` · ${status.phone_masked}` : ''}.`
+                  : 'Follow these steps to link your WhatsApp number.'}
+              </p>
+            </div>
+            <button
+              type="button"
+              aria-label="Close"
+              onClick={() => setLinkDialogOpen(false)}
+              className="flex size-9 shrink-0 items-center justify-center rounded-full text-foreground/50 hover:bg-primary/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-accent"
+            >
+              <X size={20} />
+            </button>
+          </div>
+
+          {linkStep === 'success' ? (
+            <div className="mt-6 rounded-card bg-emerald-50 p-4 text-emerald-800" role="status">
+              <p className="flex items-center gap-2 font-medium"><CheckCircle size={20} weight="fill" /> Successfully linked</p>
+              <Button className="mt-4" onClick={() => setLinkDialogOpen(false)}>Done</Button>
+            </div>
+          ) : linkInfo ? (
+            <div className="mt-6 space-y-5">
+              <div className="rounded-card border border-primary/10 p-4">
+                <p className="text-sm font-semibold text-primary">1. Join the bot</p>
+                <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+                  This is a one-time step to join the WhatsApp sandbox.
+                </p>
+                <a
+                  href={linkInfo.join_url}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary px-4 text-sm font-medium text-white hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                >
+                  Join the bot
+                </a>
+              </div>
+
+              <div className="rounded-card border border-primary/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-primary">2. Send link code</p>
+                  {secondsRemaining > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-xs tabular-nums text-foreground/55">
+                      <Clock size={15} aria-hidden="true" /> Expires in {formatCountdown(secondsRemaining)}
+                    </span>
+                  )}
+                </div>
+                <p className="mt-1 text-sm text-foreground/60">Open WhatsApp and send this code to the bot.</p>
+                {secondsRemaining > 0 ? (
+                  <>
+                    <p className="my-4 break-all text-center font-mono text-3xl font-semibold tracking-[0.18em] text-primary sm:text-4xl">
+                      {linkInfo.code}
+                    </p>
+                    <a
+                      href={linkInfo.link_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex h-10 w-full items-center justify-center rounded-sm border border-primary/20 bg-white px-4 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                      Send link code
+                    </a>
+                  </>
+                ) : (
+                  <div className="mt-4">
+                    <p role="alert" className="text-sm text-red-700">This code has expired. Create a new code to continue.</p>
+                    <Button className="mt-3" loading={linkLoading} onClick={() => void issueLinkCode()}>
+                      Generate a new code
+                    </Button>
+                  </div>
+                )}
+              </div>
+              {linkError && <p role="alert" className="text-sm text-red-700">{linkError}</p>}
+            </div>
+          ) : (
+            <div className="mt-6 space-y-3">
+              <p className="text-sm text-foreground/60">Preparing your secure link code…</p>
+              {linkError && <p role="alert" className="text-sm text-red-700">{linkError}</p>}
+              <Button loading={linkLoading} onClick={() => void issueLinkCode()}>Try again</Button>
+            </div>
+          )}
+        </div>
+      </dialog>
+    </div>
   )
 }
 

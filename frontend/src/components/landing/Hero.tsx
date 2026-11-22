@@ -1,7 +1,8 @@
 import { motion } from 'framer-motion'
-import { LockKey } from '@phosphor-icons/react'
+import { LockKey, WhatsappLogo } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
 import { OpenAppButton } from './OpenAppButton'
+import { Button } from '../ui/Button'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -79,7 +80,7 @@ function Vignette() {
   )
 }
 
-export default function Hero() {
+export default function Hero({ onTryWhatsApp }: { onTryWhatsApp: () => void }) {
   return (
     <section className="relative flex min-h-screen items-center overflow-hidden bg-[size:24px_24px] pt-24">
 
@@ -173,6 +174,13 @@ export default function Hero() {
             >
               See the demo
             </motion.a>
+            <Button
+              variant="secondary"
+              leftIcon={<WhatsappLogo size={17} weight="fill" />}
+              onClick={onTryWhatsApp}
+            >
+              Try it on WhatsApp
+            </Button>
           </motion.div>
         </div>
 

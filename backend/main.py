@@ -1,12 +1,13 @@
 import uvicorn
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import Response
 from contextlib import asynccontextmanager
 from loguru import logger
 from core.config import settings
 from app import models
 from core.session import engine
-from app.routers import webhook, auth, payments, payroll, dashboard, rates
+from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts
 from core.session import engine
 
 
@@ -25,6 +26,23 @@ app = FastAPI(
     instantly in local fiat.""",
     lifespan=lifespan,
 )
+
+
+@app.exception_handler(Exception)
+async def handle_unexpected_error(request: Request, exc: Exception):
+    if request.url.path == "/v1/whatsapp/webhook":
+        logger.exception("Unhandled WhatsApp webhook error", exc_info=exc)
+        return Response(
+            content=(
+                '<?xml version="1.0" encoding="UTF-8"?>'
+                '<Response><Message><Body>'
+                "Sorry, Veil couldn't process that just now. Please try again shortly."
+                "</Body></Message></Response>"
+            ),
+            media_type="application/xml",
+        )
+    logger.exception("Unhandled API error", exc_info=exc)
+    return Response(content='{"detail":"Internal server error"}', status_code=500, media_type="application/json")
 
 app.add_middleware(
     CORSMiddleware,
@@ -45,6 +63,8 @@ app.include_router(payments.router, prefix="/v1")
 app.include_router(payroll.router, prefix="/v1")
 app.include_router(dashboard.router, prefix="/v1")
 app.include_router(rates.router, prefix="/v1")
+app.include_router(whatsapp.router, prefix="/v1")
+app.include_router(whatsapp_accounts.router, prefix="/v1")
 
 @app.get("/")
 async def root():

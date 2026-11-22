@@ -9,14 +9,13 @@ from sqlmodel import select
 from uuid import UUID
 from datetime import datetime, timezone
 from typing import Optional, Literal
-from decimal import Decimal, ROUND_HALF_UP
-from datetime import timedelta
+from decimal import Decimal
 from core.config import settings
 from core.session import get_session
 from app.routers.dependencies import get_current_user, get_optional_user
 from app.models.user import User
 from app.models.payment import PaymentIntent, utc_now
-from app.services.rates import get_rates
+from app.services.payment_intents import create_payment_intent
 from solana.rpc.async_api import AsyncClient
 from solana.rpc.commitment import Confirmed
 from solders.pubkey import Pubkey
@@ -207,30 +206,17 @@ async def create_intent(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
-    rates = await get_rates()
-    rate = rates["usdc" if req.token == "USDC" else "sol"]
-    decimals = 6 if req.token == "USDC" else 9
-    atomic = int((req.amount_ngn / rate * (Decimal(10) ** decimals)).quantize(Decimal("1"), rounding=ROUND_HALF_UP))
-    if atomic < 1:
-        raise HTTPException(status_code=400, detail="amount_ngn is below the smallest supported token amount")
-    now = utc_now()
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=30)
-    intent = PaymentIntent(
+    intent = await create_payment_intent(
+        db=db,
         user_id=current_user.id,
-        merchant_ref=req.merchantRef,
-        mint=settings.USDC_MINT if req.token == "USDC" else settings.SOL_MINT,
-        amount_atomic=str(atomic),
-        amount_ngn=str(req.amount_ngn),
-        rate_ngn_per_token=str(rate),
-        expires_at=expires_at,
         recipient_address=req.recipientAddress,
-        receive_mode=req.receiveMode,
+        amount_ngn=req.amount_ngn,
+        merchant_ref=req.merchantRef,
+        token=req.token,
         memo=req.memo,
-        status="created"
+        source="web",
+        receive_mode=req.receiveMode,
     )
-    db.add(intent)
-    await db.commit()
-    await db.refresh(intent)
     return format_intent(intent, is_owner=True)
 
 @router.get("/intents/{intent_id}")

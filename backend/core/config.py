@@ -26,6 +26,15 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173")
     
     WASENDER_API_KEY: str | None = Field(default=None)
+    TWILIO_AUTH_TOKEN: str | None = Field(default=None)
+    WEBHOOK_PUBLIC_URL: str | None = Field(default=None)
+    FRONTEND_URL: str = Field(default="https://veil.app")
+    TWILIO_WHATSAPP_FROM: str | None = Field(default=None)
+    TWILIO_SANDBOX_JOIN_CODE: str | None = Field(default=None)
+    WHATSAPP_DEMO_MODE: str = Field(default="false")
+    WHATSAPP_DEMO_PASSCODE: str | None = Field(default=None)
+    WHATSAPP_DEMO_MAX_NUMBERS: int = Field(default=10, ge=0)
+    WHATSAPP_DEMO_MERCHANT_WALLET: str | None = Field(default=None)
     JWT_SECRET: str = Field(..., min_length=32)
 
     @property

@@ -21,6 +21,7 @@ dependencies = [
     "solana>=0.41.0",
     "sqlalchemy>=2.0.50",
     "sqlmodel>=0.0.38",
+    "twilio>=9.13.0",
 ]
 
 [tool.fastapi]
