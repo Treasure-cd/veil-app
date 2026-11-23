@@ -2,7 +2,6 @@ import { motion } from 'framer-motion'
 import { LockKey, WhatsappLogo } from '@phosphor-icons/react'
 import WhatsappMockup from './WhatsappMockup'
 import { OpenAppButton } from './OpenAppButton'
-import { Button } from '../ui/Button'
 
 const ease = [0.22, 1, 0.36, 1] as const
 
@@ -80,7 +79,7 @@ function Vignette() {
   )
 }
 
-export default function Hero({ onTryWhatsApp }: { onTryWhatsApp: () => void }) {
+export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
   return (
     <section className="relative flex min-h-screen items-center overflow-hidden bg-[size:24px_24px] pt-24">
 
@@ -166,21 +165,16 @@ export default function Hero({ onTryWhatsApp }: { onTryWhatsApp: () => void }) {
           >
             <OpenAppButton className="inline-flex h-12 items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
 
-            <motion.a
-              href="#how"
-              whileHover={{ scale: 1.03 }}
+            <motion.button
+              type="button"
+              onClick={onShowDemo}
+              whileHover={{ scale: 1.03, y: -2 }}
               whileTap={{ scale: 0.97 }}
-              className="inline-flex h-12 items-center gap-2 rounded-full px-6 text-sm font-medium text-foreground/70 transition-colors hover:text-foreground"
+              className="inline-flex h-12 items-center gap-2.5 rounded-lg bg-[#25D366] px-6 text-sm font-semibold text-[#063b1d] shadow-[0_10px_30px_-8px_rgba(37,211,102,0.65)] transition-colors hover:bg-[#1ebe5b] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
+              <WhatsappLogo size={19} weight="fill" aria-hidden="true" />
               See the demo
-            </motion.a>
-            <Button
-              variant="secondary"
-              leftIcon={<WhatsappLogo size={17} weight="fill" />}
-              onClick={onTryWhatsApp}
-            >
-              Try it on WhatsApp
-            </Button>
+            </motion.button>
           </motion.div>
         </div>
 
