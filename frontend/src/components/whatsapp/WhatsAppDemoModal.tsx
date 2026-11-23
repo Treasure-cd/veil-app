@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import { CheckCircle, WhatsappLogo, X } from '@phosphor-icons/react'
+import { CheckCircle, Wallet, WhatsappLogo, X } from '@phosphor-icons/react'
+import { useAuth } from '../../auth/useAuth'
+import { truncateAddress } from '../../lib/format'
 import { ApiError, api } from '../../services/api'
 import { Button } from '../ui/Button'
 
@@ -14,12 +16,13 @@ interface DemoLinkResponse {
 }
 
 export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
+  const { status, user, openAuthModal, disconnectWallet } = useAuth()
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [phone, setPhone] = useState('')
-  const [passcode, setPasscode] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DemoLinkResponse | null>(null)
+  const walletLinked = status === 'authenticated' && Boolean(user?.address)
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -31,7 +34,6 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
   useEffect(() => {
     if (open) return
     setPhone('')
-    setPasscode('')
     setError(null)
     setResult(null)
   }, [open])
@@ -44,12 +46,14 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
       const nationalNumber = phone.replace(/\D/g, '').replace(/^0/, '')
       const response = await api<DemoLinkResponse>('/v1/whatsapp/demo-link', {
         method: 'POST',
-        body: JSON.stringify({ phone: `+234${nationalNumber}`, passcode }),
+        body: JSON.stringify({ phone: `+234${nationalNumber}` }),
       })
       setResult(response)
     } catch (err) {
-      if (err instanceof ApiError && err.status === 403) {
-        setError('We couldn’t verify demo access. Check your details and try again.')
+      if (err instanceof ApiError && err.status === 401) {
+        setError('Your wallet session expired. Reconnect your wallet and try again.')
+      } else if (err instanceof ApiError && err.status === 403) {
+        setError('Demo access is currently unavailable. Please try again later.')
       } else if (err instanceof ApiError && err.status === 422) {
         setError('Enter a valid phone number.')
       } else if (err instanceof ApiError && err.status === 429) {
@@ -84,7 +88,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
             </span>
             <div>
               <h2 id="whatsapp-demo-title" className="text-xl font-semibold text-primary">Try it on WhatsApp</h2>
-              <p className="mt-1 text-sm text-foreground/60">Get a demo message from the Veil bot.</p>
+              <p className="mt-1 text-sm text-foreground/60">Connect the wallet that should receive demo payments, then get the bot link.</p>
             </div>
           </div>
           <button
@@ -102,6 +106,12 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
             <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
               <CheckCircle size={19} weight="fill" aria-hidden="true" /> You’re ready to try the demo.
             </p>
+            {walletLinked && user?.address && (
+              <p className="rounded-card bg-primary/5 px-3 py-2 text-xs text-primary">
+                Checkout links from this number pay your wallet{' '}
+                <span className="font-mono" title={user.address}>{truncateAddress(user.address)}</span>.
+              </p>
+            )}
             <ol className="space-y-3">
               <li className="rounded-card border border-primary/10 p-4">
                 <p className="text-sm font-semibold text-primary">1. Tap Join the bot</p>
@@ -130,6 +140,43 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
           </div>
         ) : (
           <form className="mt-6 space-y-4" onSubmit={(event) => void submit(event)}>
+            <div className="rounded-card border border-primary/10 bg-background/60 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex min-w-0 items-center gap-3">
+                  <span className="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Wallet size={18} weight="bold" aria-hidden="true" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-primary">
+                      {walletLinked ? 'Receiving wallet linked' : 'Link your receiving wallet'}
+                    </p>
+                    <p
+                      className="truncate font-mono text-xs text-foreground/60"
+                      title={walletLinked ? user?.address ?? undefined : undefined}
+                    >
+                      {walletLinked
+                        ? truncateAddress(user?.address ?? '')
+                        : 'Demo payments go to the wallet you sign in with.'}
+                    </p>
+                  </div>
+                </div>
+                {walletLinked && (
+                  <button
+                    type="button"
+                    onClick={() => void disconnectWallet()}
+                    className="shrink-0 text-xs font-medium text-primary underline underline-offset-2 hover:text-secondary focus-visible:outline-2 focus-visible:outline-accent"
+                  >
+                    Change
+                  </button>
+                )}
+              </div>
+              {!walletLinked && (
+                <Button type="button" className="mt-3" fullWidth onClick={openAuthModal}>
+                  Connect wallet
+                </Button>
+              )}
+            </div>
+
             <label className="block text-sm font-medium text-foreground" htmlFor="demo-phone">
               Phone number
             </label>
@@ -147,21 +194,9 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                 className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none placeholder:text-foreground/35"
               />
             </div>
-            <label className="block text-sm font-medium text-foreground" htmlFor="demo-passcode">
-              Demo passcode
-            </label>
-            <input
-              id="demo-passcode"
-              type="password"
-              autoComplete="off"
-              required
-              value={passcode}
-              onChange={(event) => setPasscode(event.target.value)}
-              className="h-12 w-full rounded-card border border-primary/15 bg-background px-3 text-base outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
-            />
             {error && <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-            <Button type="submit" fullWidth size="lg" loading={loading}>
-              Get demo link
+            <Button type="submit" fullWidth size="lg" loading={loading} disabled={!walletLinked}>
+              {walletLinked ? 'Get demo link' : 'Connect wallet to continue'}
             </Button>
           </form>
         )}

@@ -32,7 +32,6 @@ class Settings(BaseSettings):
     TWILIO_WHATSAPP_FROM: str | None = Field(default=None)
     TWILIO_SANDBOX_JOIN_CODE: str | None = Field(default=None)
     WHATSAPP_DEMO_MODE: str = Field(default="false")
-    WHATSAPP_DEMO_PASSCODE: str | None = Field(default=None)
     WHATSAPP_DEMO_MAX_NUMBERS: int = Field(default=10, ge=0)
     WHATSAPP_DEMO_MERCHANT_WALLET: str | None = Field(default=None)
     JWT_SECRET: str = Field(..., min_length=32)

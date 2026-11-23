@@ -92,7 +92,7 @@ export function WhatsAppIntroModal({ open, onClose, onContinue }: WhatsAppIntroM
 
         <p className="mt-4 flex items-start gap-2 text-xs leading-relaxed text-foreground/55">
           <CheckCircle size={15} className="mt-0.5 shrink-0 text-[#128C4A]" weight="fill" aria-hidden="true" />
-          You’ll link your number in the next step. No wallet or card needed to try.
+          Next, connect the wallet that should receive demo payments, then link your number. Signing is free and moves no funds.
         </p>
 
         <Button className="mt-6" fullWidth size="lg" onClick={onContinue}>

@@ -8,9 +8,9 @@ from sqlmodel import select
 
 from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppSession
-from app.routers.dependencies import get_current_user
+from app.routers.dependencies import get_current_user, get_optional_user
 from app.services.phone_numbers import normalize_phone_number
-from app.services.whatsapp_demo import check_rate_limit, create_demo_link, validate_demo_passcode
+from app.services.whatsapp_demo import check_rate_limit, create_demo_link, ensure_demo_enabled
 from app.services.whatsapp_linking import create_link_code, join_url, mask_phone, whatsapp_url
 from core.session import get_session
 
@@ -19,7 +19,6 @@ router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 
 class DemoLinkRequest(BaseModel):
     phone: str = Field(min_length=1, max_length=64)
-    passcode: str = Field(max_length=256)
 
 
 @router.post("/link-code")
@@ -75,6 +74,7 @@ async def demo_link(
     payload: DemoLinkRequest,
     request: Request,
     db: AsyncSession = Depends(get_session),
+    current_user: User | None = Depends(get_optional_user),
 ):
     ip_address = request.client.host if request.client else "unknown"
     rate_limited = False
@@ -84,7 +84,11 @@ async def demo_link(
         if exc.status_code != 429:
             raise
         rate_limited = True
-    validate_demo_passcode(payload.passcode)
+    ensure_demo_enabled()
+    # Don't silently fall back to the shared demo wallet if the browser sent a
+    # token we can't verify - that would send funds somewhere the user didn't pick.
+    if request.headers.get("Authorization") and current_user is None:
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
     if rate_limited:
         raise HTTPException(
             status_code=429,
@@ -95,6 +99,7 @@ async def demo_link(
         phone = normalize_phone_number(payload.phone)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Enter a valid phone number.") from exc
-    # Pass the canonical E.164 form into the service so all entry points share normalization.
-    link_url = await create_demo_link(db, phone)
+    # A signed-in test user links their own wallet; otherwise fall back to the
+    # shared demo merchant. Pass canonical E.164 so all entry points normalize alike.
+    link_url = await create_demo_link(db, phone, merchant=current_user)
     return {"ok": True, "join_url": link_url}
