@@ -103,15 +103,16 @@ async def get_dashboard(
         )
     )).one()
 
+    channel = _channel_expression().label("channel")
     by_channel_rows = (await db.execute(
         select(
-            _channel_expression().label("channel"),
+            channel,
             func.coalesce(func.sum(ngn), 0).label("total"),
             func.count(PaymentIntent.id).label("count"),
         ).where(
             PaymentIntent.user_id == uid,
             paid,
-        ).group_by(_channel_expression())
+        ).group_by(text("channel"))
     )).all()
     by_channel = {key: {"total_ngn": "0", "count": 0} for key in CHANNELS}
     for row in by_channel_rows:
