@@ -1,5 +1,4 @@
-const BASE_URL =
-  process.env.API_URL || 'http://localhost:8000'
+const BASE_URL = (process.env.API_URL || 'http://localhost:8000').replace(/\/+$/, '')
 
 export class ApiError extends Error {
   status: number
@@ -47,7 +46,7 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   const token = config.getToken()
   if (token) headers.set('Authorization', `Bearer ${token}`)
 
-  const res = await fetch(`${BASE_URL}${path}`, { ...init, headers })
+  const res = await fetch(`${BASE_URL}/${path.replace(/^\/+/, '')}`, { ...init, headers })
 
   if (!res.ok) {
     // A 401 while we had a token means it expired or was rejected: drop the session.
