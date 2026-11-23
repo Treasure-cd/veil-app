@@ -127,8 +127,12 @@ export default function Payments() {
           <p className="mx-auto mt-2 max-w-md text-sm text-foreground/65">
             Share this checkout link. Your customer does not need a Veil account, but will need to connect a Solana wallet.
           </p>
-          {generatedPayment && <Money amountNgn={generatedPayment.amountNgn} tokenAmount={generatedPayment.tokenAmount} token="USDC" className="mx-auto mt-4" primaryClassName="text-xl font-semibold text-primary" />}
-          <div className="mx-auto mt-6 inline-flex rounded-xl border border-primary/10 bg-white p-3 shadow-sm">
+          {generatedPayment && (
+            <div className="mt-4 flex justify-center">
+              <Money amountNgn={generatedPayment.amountNgn} tokenAmount={generatedPayment.tokenAmount} token="USDC" primaryClassName="text-xl font-semibold" />
+            </div>
+          )}
+          <div className="mx-auto mt-6 flex w-fit rounded-xl border border-primary/10 bg-white p-3 shadow-sm">
             <QRCodeSVG value={generatedLink} size={176} level="M" includeMargin aria-label="QR code for payment link" />
           </div>
           <p className="mt-2 text-xs text-foreground/55">Scan to open checkout</p>
