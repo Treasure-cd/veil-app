@@ -9,7 +9,7 @@ from typing import AsyncGenerator
 
 def get_database_url() -> str:
     """Normalize Neon/Postgres URLs for SQLAlchemy's asyncpg driver."""
-    url = settings.DATABASE_URL_DEV
+    url = settings.DATABASE_URL
     if url.startswith("postgres://"):
         return url.replace("postgres://", "postgresql+asyncpg://", 1)
     if url.startswith("postgresql://"):

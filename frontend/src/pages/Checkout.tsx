@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { WalletReadyState } from '@solana/wallet-adapter-base'
 import { useConnection, useWallet } from '@solana/wallet-adapter-react'
 import {
@@ -9,13 +9,28 @@ import {
   VersionedTransaction,
   type BlockhashWithExpiryBlockHeight,
 } from '@solana/web3.js'
-import { ArrowSquareOut, CheckCircle, GlobeHemisphereWest, ShieldCheck, Wallet, WarningCircle } from '@phosphor-icons/react'
+import {
+  ArrowSquareOut,
+  Bank,
+  CheckCircle,
+  GlobeHemisphereWest,
+  ShieldCheck,
+  Wallet,
+  WarningCircle,
+} from '@phosphor-icons/react'
 import { useParams } from 'react-router'
 import { truncateAddress } from '../lib/format'
+import { formatNgn } from '../lib/money'
 import { api } from '../services/api'
 import { useAuth } from '../auth/useAuth'
 import { Button } from '../components/ui/Button'
 import { Money } from '../components/ui/Money'
+import { BankTransferCard } from '../components/payments/BankTransferCard'
+import {
+  createIntentFiatCheckout,
+  reconcileIntentFiatCheckout,
+  type FiatPayment,
+} from '../services/fiat'
 import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, USDC_MINT } from '../lib/network'
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -40,6 +55,7 @@ interface InvoiceData {
   status: string
   fundSignature?: string | null
   failureReason?: string | null
+  fiatCheckout?: FiatPayment | null
 }
 
 async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -130,7 +146,11 @@ export default function Checkout() {
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null)
   const [loading, setLoading] = useState(true)
+  const [payMethod, setPayMethod] = useState<'bank' | 'wallet'>('bank')
   const [paying, setPaying] = useState(false)
+  const [fiatLoading, setFiatLoading] = useState(false)
+  const [fiatChecking, setFiatChecking] = useState(false)
+  const [fiatError, setFiatError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [paymentError, setPaymentError] = useState<string | null>(null)
   const [confirmedSignature, setConfirmedSignature] = useState<string | null>(null)
@@ -155,10 +175,12 @@ export default function Checkout() {
     setLoading(true)
     void api<InvoiceData>(`/v1/payments/intents/${encodeURIComponent(id)}`)
       .then((data) => {
-        if (active) {
-          setInvoice(data)
-          if (data.fundSignature) setConfirmedSignature(data.fundSignature)
-        }
+        if (!active) return
+        setInvoice(data)
+        if (data.fundSignature) setConfirmedSignature(data.fundSignature)
+        const wholeNgn = data.amount_ngn ? /^\d+$/.test(data.amount_ngn) && Number(data.amount_ngn) >= 1 : false
+        if (data.fiatCheckout || wholeNgn) setPayMethod('bank')
+        else setPayMethod('wallet')
       })
       .catch((err: unknown) => {
         if (active) setError(err instanceof Error ? err.message : 'We could not load this payment request.')
@@ -182,6 +204,41 @@ export default function Checkout() {
     return () => window.clearInterval(interval)
   }, [invoice?.expires_at, invoice?.status])
 
+  const invoiceId = invoice?.id
+  const invoiceStatus = invoice?.status
+  const fiatCheckoutStatus = invoice?.fiatCheckout?.status
+
+  const handleReconcileFiat = useCallback(async () => {
+    if (!invoiceId) return
+    setFiatChecking(true)
+    setFiatError(null)
+    try {
+      const updated = await reconcileIntentFiatCheckout(invoiceId)
+      setInvoice((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          fiatCheckout: updated,
+          status: updated.status === 'completed' ? 'funded' : prev.status,
+        }
+      })
+    } catch (err) {
+      setFiatError(err instanceof Error ? err.message : 'Could not check bank transfer status.')
+    } finally {
+      setFiatChecking(false)
+    }
+  }, [invoiceId])
+
+  useEffect(() => {
+    if (!invoiceId || invoiceStatus !== 'created' || (fiatCheckoutStatus !== 'pending' && fiatCheckoutStatus !== 'processing')) {
+      return
+    }
+    const interval = window.setInterval(() => {
+      void handleReconcileFiat()
+    }, 8000)
+    return () => window.clearInterval(interval)
+  }, [invoiceId, invoiceStatus, fiatCheckoutStatus, handleReconcileFiat])
+
   useEffect(() => {
     if (!pendingConnect || !wallet || connected || connecting) return
     setPendingConnect(false)
@@ -195,6 +252,20 @@ export default function Checkout() {
     setConnectError(null)
     select(name)
     setPendingConnect(true)
+  }
+
+  async function handleGenerateFiatCheckout() {
+    if (!invoice) return
+    setFiatLoading(true)
+    setFiatError(null)
+    try {
+      const checkout = await createIntentFiatCheckout(invoice.id)
+      setInvoice((prev) => (prev ? { ...prev, fiatCheckout: checkout } : prev))
+    } catch (err) {
+      setFiatError(err instanceof Error ? err.message : 'Could not generate bank transfer details.')
+    } finally {
+      setFiatLoading(false)
+    }
   }
 
   async function handlePay() {
@@ -486,6 +557,10 @@ export default function Checkout() {
     : `${Math.floor(remainingSeconds / 60).toString().padStart(2, '0')}:${(remainingSeconds % 60).toString().padStart(2, '0')}`
 
   const isOwner = user !== null && invoice.userId === user.id
+  const paidByFiat = invoice.fiatCheckout?.status === 'completed'
+  const wholeNgnEligible = Boolean(
+    invoice.amount_ngn && /^\d+$/.test(invoice.amount_ngn) && Number(invoice.amount_ngn) >= 1,
+  )
 
   if (
     invoice.status === 'claimed' ||
@@ -500,6 +575,15 @@ export default function Checkout() {
         <p className="mt-2 text-sm text-foreground/65">
           <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="inline-flex align-middle" /> paid for “{invoice.memo || 'Payment request'}”.
         </p>
+        {paidByFiat && invoice.fiatCheckout && (
+          <div className="mt-5 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-900">
+            <p className="font-semibold">Settled via NGN bank transfer</p>
+            <p className="mt-1">
+              Amount: <span className="font-mono font-medium">{formatNgn(invoice.fiatCheckout.amountPayable ?? invoice.fiatCheckout.amount)}</span>
+            </p>
+            <p className="mt-0.5 font-mono text-emerald-800/80">Ref: {invoice.fiatCheckout.reference}</p>
+          </div>
+        )}
         {(confirmedSignature || invoice.fundSignature) && (
           <a
             href={`https://explorer.solana.com/tx/${encodeURIComponent(confirmedSignature || invoice.fundSignature || '')}?cluster=${NETWORK}`}
@@ -511,7 +595,9 @@ export default function Checkout() {
           </a>
         )}
         <p className="mt-6 rounded-card bg-background px-4 py-3 text-xs text-foreground/55">
-          This payment was made with a standard on-chain transfer. You can safely close this page.
+          {paidByFiat
+            ? 'This NGN bank transfer has been verified by FossaPay. You can safely close this page.'
+            : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
         </p>
       </CheckoutFrame>
     )
@@ -595,94 +681,166 @@ export default function Checkout() {
   return (
     <CheckoutFrame>
       <div className="mx-auto flex size-12 items-center justify-center rounded-full bg-primary/10 text-primary">
-        <Wallet size={24} weight="fill" />
+        {payMethod === 'bank' ? <Bank size={24} weight="fill" /> : <Wallet size={24} weight="fill" />}
       </div>
       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Secure checkout</p>
       <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="mx-auto mt-2" primaryClassName="text-4xl font-semibold tracking-tight text-primary" secondaryClassName="text-sm" />
       <p className="mt-2 text-sm text-foreground/65">{invoice.memo || 'Payment request'}</p>
 
       {countdown && (
-        <p className={`mt-3 rounded-pill px-3 py-1.5 text-xs font-medium tabular-nums ${expired ? 'bg-amber-50 text-amber-800' : 'bg-primary/5 text-primary/70'}`} role="timer">
+        <p className={`mt-3 inline-flex rounded-pill px-3 py-1.5 text-xs font-medium tabular-nums ${expired ? 'bg-amber-50 text-amber-800' : 'bg-primary/5 text-primary/70'}`} role="timer">
           {expired ? 'Quote expired' : `Locked quote expires in ${countdown}`}
           {expired && pendingTransaction ? ' · confirm your submitted transfer below' : ''}
         </p>
       )}
 
-      <div className="my-6 rounded-card border border-primary/10 bg-background p-4 text-left">
-        <div className="flex items-start gap-2 text-sm text-foreground/70">
-          {invoice.receiveMode === 'private'
-            ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
-            : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
-          <p>
-            This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
-            {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
-          </p>
-        </div>
+      <div
+        className="mt-5 grid grid-cols-2 gap-1 rounded-pill border border-primary/10 bg-background p-1"
+        role="tablist"
+        aria-label="Payment method"
+      >
+        <button
+          type="button"
+          role="tab"
+          aria-selected={payMethod === 'bank'}
+          disabled={!wholeNgnEligible && !invoice.fiatCheckout}
+          onClick={() => setPayMethod('bank')}
+          className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-45 ${
+            payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+          }`}
+        >
+          <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
+          Bank transfer
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={payMethod === 'wallet'}
+          onClick={() => setPayMethod('wallet')}
+          className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+            payMethod === 'wallet' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+          }`}
+        >
+          <Wallet size={15} weight={payMethod === 'wallet' ? 'fill' : 'regular'} />
+          Solana wallet
+        </button>
       </div>
 
-      {paymentError && (
-        <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
-          {pendingTransaction
-            ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
-            : ''}
-          {paymentError}
-          {NETWORK === 'devnet' && paymentError.includes('No USDC token account') && (
-            <>
-              {' '}
-              <a
-                href="https://faucet.circle.com/"
-                target="_blank"
-                rel="noreferrer"
-                className="font-semibold underline underline-offset-2"
-              >
-                Open Circle’s Devnet faucet
-              </a>
-              . Select Solana Devnet and send USDC to the connected payer wallet.
-            </>
+      {payMethod === 'bank' ? (
+        <div className="mt-5 space-y-4">
+          {fiatError && (
+            <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+              {fiatError}
+            </p>
           )}
-        </p>
-      )}
-      {connectError && (
-        <p role="alert" className="mb-4 rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{connectError}</p>
-      )}
-
-      {publicKey && connected ? (
-        <div className="space-y-3">
-          <p className="text-xs text-foreground/55">
-            Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
-          </p>
-          <p className="text-xs text-foreground/45">This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.</p>
-          <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()} disabled={expired && !pendingTransaction}>
-            {pendingTransaction ? 'Retry payment confirmation' : 'Pay now'}
-          </Button>
-        </div>
-      ) : installedWallets.length > 0 ? (
-        <div className="space-y-2">
-          <p className="mb-3 text-sm font-medium">Connect a wallet to continue</p>
-          {installedWallets.map(({ adapter }) => (
-            <button
-              key={adapter.name}
-              type="button"
-              disabled={connecting || pendingConnect}
-              onClick={() => chooseWallet(adapter.name)}
-              className="flex w-full items-center gap-3 rounded-card border border-primary/15 bg-white px-4 py-3 text-left text-sm font-medium transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
-            >
-              <img src={adapter.icon} alt="" className="size-6 rounded-md" />
-              {connecting || pendingConnect ? 'Connecting…' : `Continue with ${adapter.name}`}
-            </button>
-          ))}
+          {invoice.fiatCheckout ? (
+            <BankTransferCard
+              checkout={invoice.fiatCheckout}
+              checkingStatus={fiatChecking}
+              onCheckStatus={() => void handleReconcileFiat()}
+              canGenerateNew={!expired}
+              generatingNew={fiatLoading}
+              onGenerateNew={() => void handleGenerateFiatCheckout()}
+            />
+          ) : (
+            <div className="rounded-card border border-primary/10 bg-background p-4 text-left">
+              <p className="text-sm font-medium text-primary">Pay in Naira via bank transfer</p>
+              <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                Generate a dedicated 30-minute virtual bank account from FossaPay for this payment.
+              </p>
+              <Button
+                className="mt-4"
+                size="lg"
+                fullWidth
+                loading={fiatLoading}
+                disabled={expired || !wholeNgnEligible}
+                leftIcon={<Bank size={18} weight="fill" />}
+                onClick={() => void handleGenerateFiatCheckout()}
+              >
+                Get bank transfer account
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
-        <div className="rounded-card border border-primary/10 bg-background p-4 text-sm text-foreground/65">
-          No Solana wallet was found. Install a browser wallet such as{' '}
-          <a className="font-medium text-primary underline" href="https://phantom.com/download" target="_blank" rel="noreferrer">Phantom</a>
-          {' '}or{' '}
-          <a className="font-medium text-primary underline" href="https://www.solflare.com/download/" target="_blank" rel="noreferrer">Solflare</a>
-          , then reload this page.
-        </div>
+        <>
+          <div className="my-5 rounded-card border border-primary/10 bg-background p-4 text-left">
+            <div className="flex items-start gap-2 text-sm text-foreground/70">
+              {invoice.receiveMode === 'private'
+                ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
+                : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
+              <p>
+                This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
+                {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
+              </p>
+            </div>
+          </div>
+
+          {paymentError && (
+            <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+              {pendingTransaction
+                ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
+                : ''}
+              {paymentError}
+              {NETWORK === 'devnet' && paymentError.includes('No USDC token account') && (
+                <>
+                  {' '}
+                  <a
+                    href="https://faucet.circle.com/"
+                    target="_blank"
+                    rel="noreferrer"
+                    className="font-semibold underline underline-offset-2"
+                  >
+                    Open Circle’s Devnet faucet
+                  </a>
+                  . Select Solana Devnet and send USDC to the connected payer wallet.
+                </>
+              )}
+            </p>
+          )}
+          {connectError && (
+            <p role="alert" className="mb-4 rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{connectError}</p>
+          )}
+
+          {publicKey && connected ? (
+            <div className="space-y-3">
+              <p className="text-xs text-foreground/55">
+                Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
+              </p>
+              <p className="text-xs text-foreground/45">This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.</p>
+              <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()} disabled={expired && !pendingTransaction}>
+                {pendingTransaction ? 'Retry payment confirmation' : 'Pay now'}
+              </Button>
+            </div>
+          ) : installedWallets.length > 0 ? (
+            <div className="space-y-2">
+              <p className="mb-3 text-sm font-medium">Connect a wallet to continue</p>
+              {installedWallets.map(({ adapter }) => (
+                <button
+                  key={adapter.name}
+                  type="button"
+                  disabled={connecting || pendingConnect}
+                  onClick={() => chooseWallet(adapter.name)}
+                  className="flex w-full items-center gap-3 rounded-card border border-primary/15 bg-white px-4 py-3 text-left text-sm font-medium transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
+                >
+                  <img src={adapter.icon} alt="" className="size-6 rounded-md" />
+                  {connecting || pendingConnect ? 'Connecting…' : `Continue with ${adapter.name}`}
+                </button>
+              ))}
+            </div>
+          ) : (
+            <div className="rounded-card border border-primary/10 bg-background p-4 text-sm text-foreground/65">
+              No Solana wallet was found. Install a browser wallet such as{' '}
+              <a className="font-medium text-primary underline" href="https://phantom.com/download" target="_blank" rel="noreferrer">Phantom</a>
+              {' '}or{' '}
+              <a className="font-medium text-primary underline" href="https://www.solflare.com/download/" target="_blank" rel="noreferrer">Solflare</a>
+              , then reload this page.
+            </div>
+          )}
+        </>
       )}
 
-      <p className="mt-6 text-xs text-foreground/45">No Veil account needed · Powered by Veil on Solana</p>
+      <p className="mt-6 text-xs text-foreground/45">No Veil account needed · Powered by Veil</p>
     </CheckoutFrame>
   )
 }

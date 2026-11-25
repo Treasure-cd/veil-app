@@ -1,0 +1,5 @@
+**/.pytest_cache/
+**/.playwright/
+**/.playwright-cli/
+**/playwright-report/
+**/test-results/

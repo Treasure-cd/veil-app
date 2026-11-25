@@ -18,7 +18,7 @@ config = context.config
 def get_database_url() -> str:
     """Ensure the database URL uses the asyncpg driver."""
 
-    url = settings.DATABASE_URL_DEV
+    url = settings.DATABASE_URL
 
     if url.startswith("postgres://"):
         url = url.replace("postgres://", "postgresql+asyncpg://", 1)

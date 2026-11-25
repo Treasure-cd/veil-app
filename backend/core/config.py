@@ -1,7 +1,10 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, computed_field
+from pydantic import Field, computed_field,AliasChoices
 from functools import lru_cache
 from typing import List
+import dotenv
+
+dotenv.load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -14,7 +17,7 @@ class Settings(BaseSettings):
     )
 
     PORT: int = Field(default=8000)
-    DATABASE_URL_DEV: str = Field(...)
+    DATABASE_URL: str = Field(validation_alias=AliasChoices("DATABASE_URL_DEV", "DATABASE_URL"))
     SQL_ECHO: bool = Field(default=False)
     SOLANA_RPC_URL: str = Field(default="https://api.devnet.solana.com")
     SOLANA_NETWORK: str = Field(default="devnet")
@@ -35,6 +38,10 @@ class Settings(BaseSettings):
     WHATSAPP_DEMO_MAX_NUMBERS: int = Field(default=10, ge=0)
     WHATSAPP_DEMO_MERCHANT_WALLET: str | None = Field(default=None)
     JWT_SECRET: str = Field(..., min_length=32)
+    FOSSAPAY_API_KEY: str = Field(...)
+    FOSSAPAY_SECRET:str =Field(...)
+    FOSSAPAY_WEBHOOK_SECRET:str = Field(...)
+    FOSSAPAY_BASE_URL:str = Field(default="https://api-production.fossapay.com")
 
     @property
     def allowed_origins_list(self) -> List[str]:

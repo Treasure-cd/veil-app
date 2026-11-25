@@ -1,11 +1,33 @@
-from sqlmodel import SQLModel, Field
-from sqlalchemy import Column, DateTime
-from uuid import uuid4, UUID
 from datetime import datetime, timezone
+from enum import StrEnum
 from typing import Optional
+from uuid import UUID, uuid4
+
+from sqlalchemy import Column, DateTime
+from sqlmodel import Field, SQLModel
+
 
 def utc_now():
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+def utc_now_aware() -> datetime:
+    return datetime.now(timezone.utc)
+
+
+class FiatPaymentFlow(StrEnum):
+    CHECKOUT = "checkout"
+    PAYOUT = "payout"
+
+
+class FiatPaymentStatus(StrEnum):
+    PENDING = "pending"
+    PROCESSING = "processing"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    EXPIRED = "expired"
+    REVERSED = "reversed"
+
 
 class PaymentIntent(SQLModel, table=True):
     __tablename__ = "payment_intents"
@@ -27,3 +49,76 @@ class PaymentIntent(SQLModel, table=True):
     claim_signature: Optional[str] = Field(default=None)
     source: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
+
+
+class FiatPayment(SQLModel, table=True):
+    """Tracks FossaPay NGN checkouts (collections) and master-wallet payouts."""
+
+    __tablename__ = "fiat_payments"
+
+    id: UUID = Field(primary_key=True, default_factory=uuid4)
+    user_id: UUID = Field(..., foreign_key="user.id", index=True)
+    payment_intent_id: Optional[UUID] = Field(
+        default=None, foreign_key="payment_intents.id", index=True
+    )
+    flow: str = Field(..., index=True)  # "checkout" | "payout"
+    reference: str = Field(..., unique=True, index=True, max_length=100)
+    idempotency_key: str = Field(..., unique=True, index=True, max_length=255)
+
+    fossapay_id: Optional[str] = Field(default=None, unique=True, index=True)
+    transaction_id: Optional[str] = Field(default=None, index=True)
+    provider_reference: Optional[str] = Field(default=None)
+
+    currency: str = Field(default="NGN")
+    amount: str = Field(...)
+    fee: Optional[str] = Field(default=None)
+    amount_payable: Optional[str] = Field(default=None)
+    settlement_amount: Optional[str] = Field(default=None)
+    total_debited: Optional[str] = Field(default=None)
+    fee_bearer: Optional[str] = Field(default=None)
+    route: Optional[str] = Field(default=None)
+    split_code: Optional[str] = Field(default=None)
+    metadata_json: Optional[str] = Field(default=None)
+
+    # Checkout virtual account details or payout beneficiary bank details
+    account_type: Optional[str] = Field(default=None)
+    bank_code: Optional[str] = Field(default=None)
+    bank_name: Optional[str] = Field(default=None)
+    account_name: Optional[str] = Field(default=None)
+    account_number: Optional[str] = Field(default=None)
+
+    status: str = Field(default=FiatPaymentStatus.PENDING, index=True)
+    payment_outcome: Optional[str] = Field(default=None)
+    received_amount: Optional[str] = Field(default=None)
+    last_event_id: Optional[str] = Field(default=None)
+    description: Optional[str] = Field(default=None, max_length=255)
+    failure_reason: Optional[str] = Field(default=None)
+
+    expires_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    completed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    failed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    reversed_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class FossaPayWebhookEvent(SQLModel, table=True):
+    """Deduplication log for processed FossaPay webhook eventIds."""
+
+    __tablename__ = "fossapay_webhook_events"
+
+    event_id: str = Field(primary_key=True)
+    event_type: str = Field(..., index=True)
+    reference: Optional[str] = Field(default=None, index=True)
+    received_at: datetime = Field(
+        default_factory=utc_now_aware,
+        sa_column=Column(DateTime(timezone=True), nullable=False),
+    )

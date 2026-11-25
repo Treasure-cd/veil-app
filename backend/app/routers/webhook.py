@@ -10,8 +10,10 @@ from core.session import get_session
 from app.models.merchant import OnboardingStage, Merchant
 from app.models.user import User
 from app.models.payment import PaymentIntent
+from app.routers.payments import mark_intent_funded_from_fiat
 from app.services.message_service import send_msg
 from app.services.merchant_service import create_merchant
+from app.services.payment import FossaPayService, verify_fossapay_webhook
 from core.config import settings
 
 router = APIRouter(
@@ -253,3 +255,28 @@ async def whatsapp_webhook(
         await send_msg(phone_number, reply_msg)
 
     return {"status": "ok"}
+
+
+@router.post("/fossapay")
+async def fossapay_webhook(
+    req: Request,
+    db: AsyncSession = Depends(get_session),
+):
+    """Receive and verify asynchronous FossaPay checkout and payout events."""
+    try:
+        payload = await req.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    if not isinstance(payload, dict) or not verify_fossapay_webhook(payload, req.headers):
+        raise HTTPException(status_code=401, detail="Invalid FossaPay webhook signature")
+
+    try:
+        accepted, payment = await FossaPayService().process_webhook(db, payload)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if payment is not None:
+        await mark_intent_funded_from_fiat(db, payment)
+
+    return {"status": "ok", "accepted": accepted}
