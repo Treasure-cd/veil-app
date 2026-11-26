@@ -245,11 +245,12 @@ class PajCashService:
         if upper in PAJ_SOLANA_TOKENS:
             return PAJ_SOLANA_TOKENS[upper]
         info = await self.get_token(token_or_mint.strip(), chain="SOLANA")
+        raw_decimals = info.get("decimals")
         return {
             "symbol": info.get("symbol") or "TOKEN",
             "name": info.get("name") or "Solana Token",
             "mint": info.get("address") or token_or_mint.strip(),
-            "decimals": int(info.get("decimals") if info.get("decimals") is not None else 6),
+            "decimals": int(raw_decimals) if raw_decimals is not None else 6,
         }
 
     async def register_bank_account(
