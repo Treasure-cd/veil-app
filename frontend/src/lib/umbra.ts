@@ -1,10 +1,16 @@
-import { address, type Address } from '@solana/kit'
+import {
+  address,
+  getTransactionDecoder,
+  getTransactionEncoder,
+  type Address,
+} from '@solana/kit'
 import { createSignerFromWalletAccount, getUmbraClient } from '@umbra-privacy/sdk'
 import { getATAIntoETADirectDepositorFunction } from '@umbra-privacy/sdk/deposit'
 import { getUserRegistrationFunction } from '@umbra-privacy/sdk/registration'
 import { createU64 } from '@umbra-privacy/sdk/types'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js'
+
 
 import { NETWORK, SOLANA_RPC_URL } from './network'
 
@@ -42,7 +48,61 @@ function buildBrowserSigner(wallet: WalletContextState) {
     throw new Error('The connected account is not available from the selected Wallet Standard wallet.')
   }
 
-  return createSignerFromWalletAccount({ wallet: standardWallet, account: walletAccount })
+  const baseSigner = createSignerFromWalletAccount({ wallet: standardWallet, account: walletAccount })
+  const signTransactionFeature = standardWallet.features['solana:signTransaction'] as
+    | {
+        signTransaction: (
+          ...inputs: Array<{
+            account: typeof walletAccount
+            transaction: Uint8Array
+            chain?: `${string}:${string}`
+          }>
+        ) => Promise<Array<{ signedTransaction: Uint8Array }>>
+      }
+    | undefined
+
+  if (!signTransactionFeature) {
+    return baseSigner
+  }
+
+  const txEncoder = getTransactionEncoder()
+  const txDecoder = getTransactionDecoder()
+  const chain = `solana:${NETWORK}` as `${string}:${string}`
+
+  const signWithWallet = async (tx: any) => {
+    const [output] = await signTransactionFeature.signTransaction({
+      account: walletAccount,
+      transaction: new Uint8Array(txEncoder.encode(tx)),
+      chain,
+    })
+    const decoded = txDecoder.decode(output.signedTransaction)
+    return {
+      ...tx,
+      messageBytes: decoded.messageBytes,
+      signatures: decoded.signatures,
+    }
+  }
+
+  return {
+    ...baseSigner,
+    signTransaction: signWithWallet,
+    async signTransactions(txs: readonly any[]) {
+      const inputs = txs.map(tx => ({
+        account: walletAccount,
+        transaction: new Uint8Array(txEncoder.encode(tx)),
+        chain,
+      }))
+      const outputs = await signTransactionFeature.signTransaction(...inputs)
+      return outputs.map((output, i) => {
+        const decoded = txDecoder.decode(output.signedTransaction)
+        return {
+          ...txs[i],
+          messageBytes: decoded.messageBytes,
+          signatures: decoded.signatures,
+        }
+      })
+    },
+  }
 }
 
 function formatTokenAmount(amount: bigint, decimals: number): string {

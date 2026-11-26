@@ -109,9 +109,22 @@ nothing currently sets them.
 
 Features needed to be alive and well, and tested.
 - Payments (just check)
+- private settlements
 - Payroll (not priority)
 - Whatsapp payment intent creation
 - Fossapay off ramping
 - NFC
 - General UX updates, criticism and fixations
 - Update README
+
+
+Cross system payment checks
+- Payments work end-to-end devnet
+[*] Payrolls work, and it feels like naira working
+- Payments work with fossapay (mainnet), wait till we deploy to mainnet
+- Whatsapp payments work (just crypto). keep notes of what should be changed with how it looks
+- Private payments.
+- Integration of privacy and fossapay in whatsapp bot
+
+
+- Popup, or like, a more exciting way of saying payroll has been confirmed

@@ -335,224 +335,236 @@ export default function Payroll() {
   }
 
   return (
-    <div className="mx-auto max-w-6xl space-y-8 p-4 pb-12 sm:p-8">
+      <div className="mx-auto max-w-6xl space-y-8 p-4 pb-12 sm:p-8">
 
-      <header className="flex flex-col gap-1">
-        <h1 className="text-3xl font-bold tracking-tight text-primary">Run Payroll</h1>
-        <p className="text-foreground/70">Schedule and fund multiple payments in a single transaction.</p>
-      </header>
+        <header className="flex flex-col gap-1">
+          <h1 className="text-3xl font-bold tracking-tight text-primary">Run Payroll</h1>
+          <p className="text-foreground/70">Schedule and fund multiple payments in a single transaction.</p>
+        </header>
 
-      {error && (
-        <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700">
-          <WarningCircle className="shrink-0" size={24} weight="fill" />
-          <span className="min-w-0 break-words text-sm font-medium">{error}</span>
-        </div>
-      )}
+        {error && (
+          <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700">
+            <WarningCircle className="shrink-0" size={24} weight="fill" />
+            <span className="min-w-0 break-words text-sm font-medium">{error}</span>
+          </div>
+        )}
 
-      <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
+        <div className="grid grid-cols-1 gap-8 lg:grid-cols-3">
 
-        {/* --- LEFT COLUMN (Config & Recipients) --- */}
-        <div className="col-span-1 space-y-6 lg:col-span-2">
+          {/* --- LEFT COLUMN (Config & Recipients) --- */}
+          <div className="col-span-1 space-y-6 lg:col-span-2">
 
-          {/* Settings Card */}
-          <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-            <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
-              <CalendarBlank size={20} /> Schedule & Currency
-            </h2>
-
-            <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground/70">Payout currency</label>
-                <div className="flex h-10 items-center rounded-lg bg-primary/5 px-3 text-sm font-medium text-primary">SOL · amounts entered in NGN</div>
-                <span className="text-xs text-foreground/50">SOL amount is estimated live and fixed when funded.</span>
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground/70">Release Date</label>
-                <input
-                  type="date"
-                  value={payrollDate}
-                  onChange={(e) => setPayrollDate(e.target.value)}
-                  className="h-10 w-full min-w-0 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-              </div>
-              <div className="flex flex-col gap-1.5">
-                <label className="text-sm font-medium text-foreground/70">Time (Local)</label>
-                <input
-                  type="time"
-                  value={payrollTime}
-                  onChange={(e) => setPayrollTime(e.target.value)}
-                  className="h-10 w-full min-w-0 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                />
-              </div>
-            </div>
-          </section>
-
-          {/* Recipients Card */}
-          <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-            <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-              <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
-                <Users size={20} /> Team Members
+            {/* Settings Card */}
+            <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+              <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
+                <CalendarBlank size={20} /> Schedule & Currency
               </h2>
 
-              <div className="flex gap-2">
-                <input ref={fileInputRef} type="file" accept=".csv" onChange={handleCsvParse} className="hidden" />
-                <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} leftIcon={<UploadSimple size={16} />}>
-                  Import CSV
-                </Button>
-              </div>
-            </div>
-
-            {/* CSV Preview */}
-            {csvRows.length > 0 && (
-              <div className="mb-6 overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/5">
-                <div className="flex min-w-0 flex-col gap-3 border-b border-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
-                  <div className="flex min-w-0 flex-col">
-                    <span className="truncate text-sm font-semibold text-emerald-800">{csvFileName}</span>
-                    <span className="text-xs text-emerald-600/80">{csvValidCount} ready · {csvRows.length - csvValidCount} with errors</span>
+              <div className="grid grid-cols-1 gap-5 md:grid-cols-3">
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <label className="text-sm font-medium text-foreground/70">Payout currency</label>
+                  <div className="flex h-10 items-center rounded-lg bg-primary/5 px-3 text-sm font-medium text-primary">
+                    <span className="truncate">SOL (NGN)</span>
                   </div>
-                  <div className="flex shrink-0 items-center gap-3">
-                    <button onClick={() => { setCsvRows([]); setCsvFileName(null) }} className="text-xs font-medium text-emerald-700 hover:underline">Cancel</button>
-                    <Button size="sm" onClick={handleImportCsv} disabled={csvValidCount === 0} className="bg-emerald-600 hover:bg-emerald-700">
-                      Import
-                    </Button>
-                  </div>
+                  <span className="text-xs text-foreground/50">Enter amounts in NGN · SOL fixed on funding.</span>
                 </div>
-                <div className="max-h-40 overflow-y-auto p-2">
-                  {csvRows.map(row => (
-                    <div key={row.rowNumber} title={row.errors.join(', ') || undefined} className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
-                      {row.errors.length ? <WarningCircle className="text-red-500" /> : <CheckCircle className="text-emerald-500" />}
-                      <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
-                      <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800" />
-                      {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600">{row.errors.join(', ')}</span>}
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <label className="text-sm font-medium text-foreground/70">Release Date</label>
+                  <input
+                    type="date"
+                    value={payrollDate}
+                    onChange={(e) => setPayrollDate(e.target.value)}
+                    className="h-10 w-full min-w-0 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                </div>
+                <div className="flex min-w-0 flex-col gap-1.5">
+                  <label className="text-sm font-medium text-foreground/70">Time (Local)</label>
+                  <input
+                    type="time"
+                    value={payrollTime}
+                    onChange={(e) => setPayrollTime(e.target.value)}
+                    className="h-10 w-full min-w-0 rounded-lg border border-primary/15 bg-transparent px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                  />
+                </div>
+              </div>
+            </section>
+
+            {/* Recipients Card */}
+            <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+              <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
+                  <Users size={20} /> Team Members
+                </h2>
+
+                <div className="flex gap-2">
+                  <input ref={fileInputRef} type="file" accept=".csv" onChange={handleCsvParse} className="hidden" />
+                  <Button variant="secondary" size="sm" onClick={() => fileInputRef.current?.click()} leftIcon={<UploadSimple size={16} />}>
+                    Import CSV
+                  </Button>
+                </div>
+              </div>
+
+              {/* CSV Preview */}
+              {csvRows.length > 0 && (
+                <div className="mb-6 overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/5">
+                  <div className="flex min-w-0 flex-col gap-3 border-b border-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
+                    <div className="flex min-w-0 flex-col">
+                      <span className="truncate text-sm font-semibold text-emerald-800">{csvFileName}</span>
+                      <span className="text-xs text-emerald-600/80">{csvValidCount} ready · {csvRows.length - csvValidCount} with errors</span>
                     </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* Manual Entry List */}
-            <div className="space-y-3">
-              {recipients.map((recipient, index) => (
-                <div key={recipient.id} className="flex min-w-0 flex-col gap-2 rounded-xl bg-primary/[0.02] p-2 xl:flex-row xl:items-center">
-                  <div className="hidden h-10 w-8 shrink-0 items-center justify-center font-mono text-xs font-semibold text-primary/40 xl:flex">
-                    {index + 1}
+                    <div className="flex shrink-0 items-center gap-3">
+                      <button onClick={() => { setCsvRows([]); setCsvFileName(null) }} className="text-xs font-medium text-emerald-700 hover:underline">Cancel</button>
+                      <Button size="sm" onClick={handleImportCsv} disabled={csvValidCount === 0} className="bg-emerald-600 hover:bg-emerald-700">
+                        Import
+                      </Button>
+                    </div>
                   </div>
-                  <input
-                    type="text"
-                    placeholder="Full Name"
-                    aria-label={`Recipient ${index + 1} name`}
-                    value={recipient.name}
-                    onChange={(e) => updateRecipient(recipient.id, 'name', e.target.value)}
-                    className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
-                  <input
-                    type="text"
-                    placeholder="Solana Wallet Address"
-                    aria-label={`Recipient ${index + 1} Solana wallet address`}
-                    value={recipient.address}
-                    onChange={(e) => updateRecipient(recipient.id, 'address', e.target.value)}
-                    className="h-10 w-full min-w-0 flex-[1.5] rounded-lg border border-primary/10 bg-white px-3 text-sm font-mono focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                  />
-                  <div className="flex min-w-0 flex-1 items-center gap-2">
-                    <input
-                      type="text"
-                      inputMode="decimal"
-                      placeholder="Amount (₦)"
-                      aria-label={`Recipient ${index + 1} amount in NGN`}
-                      value={recipient.amount}
-                      onChange={(e) => updateRecipient(recipient.id, 'amount', e.target.value)}
-                      className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
-                    />
-                {(lockedQuote?.recipients[recipient.id] || (solRate && isValidAmount(recipient.amount))) && (
-                      <Money
-                        amountNgn={recipient.amount}
-                        tokenAmount={lockedQuote?.recipients[recipient.id] ?? (solRate ? lamportsToSol(ngnToLamports(recipient.amount, solRate)) : null)}
-                        token="SOL"
-                        className="min-w-24 text-right"
-                        primaryClassName="text-xs"
-                      />
-                    )}
-                    <button
-                      onClick={() => removeRecipient(recipient.id)}
-                      aria-label={`Remove recipient ${index + 1}`}
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-foreground/40 transition-colors hover:bg-red-50 hover:text-red-500"
-                    >
-                      <Trash size={18} />
-                    </button>
+                  <div className="max-h-40 overflow-y-auto p-2">
+                    {csvRows.map(row => (
+                      <div key={row.rowNumber} title={row.errors.join(', ') || undefined} className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
+                        {row.errors.length ? <WarningCircle className="text-red-500" /> : <CheckCircle className="text-emerald-500" />}
+                        <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
+                        <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800" />
+                        {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600">{row.errors.join(', ')}</span>}
+                      </div>
+                    ))}
                   </div>
                 </div>
-              ))}
-            </div>
+              )}
 
-            <Button variant="secondary" size="md" className="mt-4 border-dashed" fullWidth onClick={addRecipient} leftIcon={<Plus size={16} />}>
-              Add another recipient
-            </Button>
+              {/* Manual Entry List */}
+              <div className="space-y-3">
+                {recipients.map((recipient, index) => {
+                  const recipientSol = lockedQuote?.recipients[recipient.id]
+                    ?? (solRate && isValidAmount(recipient.amount) ? lamportsToSol(ngnToLamports(recipient.amount, solRate)) : null)
 
-          </section>
-        </div>
+                  return (
+                    <div key={recipient.id} className="flex min-w-0 flex-col gap-1.5 rounded-xl bg-primary/[0.02] p-2">
+                      <div className="flex min-w-0 flex-col gap-2 xl:flex-row xl:items-center">
+                        <div className="hidden h-10 w-8 shrink-0 items-center justify-center font-mono text-xs font-semibold text-primary/40 xl:flex">
+                          {index + 1}
+                        </div>
+                        <input
+                          type="text"
+                          placeholder="Full Name"
+                          aria-label={`Recipient ${index + 1} name`}
+                          value={recipient.name}
+                          onChange={(e) => updateRecipient(recipient.id, 'name', e.target.value)}
+                          className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                        />
+                        <input
+                          type="text"
+                          placeholder="Solana Wallet Address"
+                          aria-label={`Recipient ${index + 1} Solana wallet address`}
+                          value={recipient.address}
+                          onChange={(e) => updateRecipient(recipient.id, 'address', e.target.value)}
+                          className="h-10 w-full min-w-0 flex-[1.5] rounded-lg border border-primary/10 bg-white px-3 text-sm font-mono focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                        />
+                        <div className="flex min-w-0 items-center gap-2 xl:w-44 xl:shrink-0">
+                          <input
+                            type="text"
+                            inputMode="decimal"
+                            placeholder="Amount (₦)"
+                            aria-label={`Recipient ${index + 1} amount in NGN`}
+                            value={recipient.amount}
+                            onChange={(e) => updateRecipient(recipient.id, 'amount', e.target.value)}
+                            className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                          />
+                          <button
+                            onClick={() => removeRecipient(recipient.id)}
+                            aria-label={`Remove recipient ${index + 1}`}
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-foreground/40 transition-colors hover:bg-red-50 hover:text-red-500"
+                          >
+                            <Trash size={18} />
+                          </button>
+                        </div>
+                      </div>
 
-        {/* --- RIGHT COLUMN (Checkout / Summary) --- */}
-        <div className="col-span-1">
-          <div className="sticky top-24 space-y-4 rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
-            <h3 className="text-lg font-semibold tracking-tight text-primary">Summary</h3>
-
-            <div className="flex flex-col gap-3 py-4 text-sm text-foreground/70">
-              <div className="flex justify-between">
-                <span>Total Recipients</span>
-                <span className="font-medium text-foreground">{recipients.filter(r => r.name || r.amount).length}</span>
+                      {recipientSol && (
+                        <div className="flex justify-end pr-12">
+                          <Money
+                            amountNgn={recipient.amount}
+                            tokenAmount={recipientSol}
+                            token="SOL"
+                            align="right"
+                            primaryClassName="text-xs text-foreground/60"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
               </div>
-              <div className="flex justify-between">
-                <span>Release Date</span>
-                <span className="font-medium text-foreground">{payrollDate ? payrollDate : 'Not set'}</span>
-              </div>
-              <div className="flex justify-between">
-                <span>Privacy</span>
-                <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-100">Private</span>
-              </div>
-            </div>
 
-            <div className="border-t border-primary/10 pt-4">
-              <div className="flex items-end justify-between">
-                <span className="text-sm font-medium text-foreground/70">Total Funding</span>
-                <div className="text-right">
-                  <Money amountNgn={total} tokenAmount={estimateSol} token="SOL" align="right" primaryClassName="text-3xl font-bold tracking-tight text-primary" />
+              <Button variant="secondary" size="md" className="mt-4 border-dashed" fullWidth onClick={addRecipient} leftIcon={<Plus size={16} />}>
+                Add another recipient
+              </Button>
+
+            </section>
+          </div>
+
+          {/* --- RIGHT COLUMN (Checkout / Summary) --- */}
+          <div className="col-span-1">
+            <div className="sticky top-24 space-y-4 rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+              <h3 className="text-lg font-semibold tracking-tight text-primary">Summary</h3>
+
+              <div className="flex flex-col gap-3 py-4 text-sm text-foreground/70">
+                <div className="flex justify-between">
+                  <span>Total Recipients</span>
+                  <span className="font-medium text-foreground">{recipients.filter(r => r.name || r.amount).length}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Release Date</span>
+                  <span className="font-medium text-foreground">{payrollDate ? payrollDate : 'Not set'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span>Privacy</span>
+                  <span className="rounded-md bg-zinc-800 px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wider text-zinc-100">Private</span>
                 </div>
               </div>
-              <p className="mt-2 text-right text-xs text-foreground/50">
-                {lockedQuote ? `Locked funding rate · ₦${Number(lockedQuote.rate).toLocaleString('en-NG')} per SOL` : solRate ? `Live rate · ₦${Number(solRate).toLocaleString('en-NG')} per SOL` : rateError ? 'Live rate unavailable' : 'Loading live rate…'}
+
+              <div className="border-t border-primary/10 pt-4">
+                <div className="flex items-end justify-between">
+                  <span className="text-sm font-medium text-foreground/70">Total Funding</span>
+                  <div className="text-right">
+                    <Money amountNgn={total} tokenAmount={estimateSol} token="SOL" align="right" primaryClassName="text-3xl font-bold tracking-tight text-primary" />
+                  </div>
+                </div>
+                <p className="mt-2 text-right text-xs text-foreground/50">
+                  {lockedQuote ? `Locked funding rate · ₦${Number(lockedQuote.rate).toLocaleString('en-NG')} per SOL` : solRate ? `Live rate · ₦${Number(solRate).toLocaleString('en-NG')} per SOL` : rateError ? 'Live rate unavailable' : 'Loading live rate…'}
+                </p>
+              </div>
+
+              {!publicKey ? (
+                <div className="mt-6 flex flex-col items-center gap-3">
+                  <p className="text-sm font-medium text-red-500">Wallet disconnected. Please reconnect to fund.</p>
+                  <WalletMultiButton className="!bg-primary hover:!bg-primary/90 !h-14 !w-full !rounded-lg !flex !justify-center !text-base !font-semibold" />
+                </div>
+              ) : (
+                <>
+                  {statusMessage && <p className="mt-4 text-center text-sm text-foreground/70" role="status">{statusMessage}</p>}
+                  {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700" role="status">Payroll group {successGroupId} funded and locked.</p>}
+                  {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting} onClick={handleRetryLock}>Retry locking payroll group</Button>}
+                  <Button
+                    size="lg"
+                    fullWidth
+                    disabled={isSubmitting}
+                    onClick={handleConfirm}
+                    className="mt-6 h-14 whitespace-nowrap text-base shadow-lg shadow-primary/20"
+                    leftIcon={<LockKey size={20} weight="bold" />}
+                  >
+                    {isSubmitting ? 'Processing…' : 'Schedule & Fund Payroll'}
+                  </Button>
+                </>
+              )}
+
+              <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
+                Devnet deposits SOL into your Umbra encrypted vault. Payroll group records are created here; automatic recipient payouts are not enabled yet.
               </p>
             </div>
-
-            {!publicKey ? (
-              <div className="mt-6 flex flex-col items-center gap-3">
-                <p className="text-sm font-medium text-red-500">Wallet disconnected. Please reconnect to fund.</p>
-                <WalletMultiButton className="!bg-primary hover:!bg-primary/90 !h-14 !w-full !rounded-lg !flex !justify-center !text-base !font-semibold" />
-              </div>
-            ) : (
-              <>
-              {statusMessage && <p className="mt-4 text-center text-sm text-foreground/70" role="status">{statusMessage}</p>}
-              {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700" role="status">Payroll group {successGroupId} funded and locked.</p>}
-              {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting} onClick={handleRetryLock}>Retry locking payroll group</Button>}
-              <Button
-                size="lg"
-                fullWidth
-                disabled={isSubmitting}
-                onClick={handleConfirm}
-                className="mt-6 h-14 text-base shadow-lg shadow-primary/20"
-                leftIcon={<LockKey size={20} weight="bold" />}
-              >
-                {isSubmitting ? statusMessage || 'Processing...' : 'Schedule & Fund Payroll'}
-              </Button>
-              </>
-            )}
-
-            <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
-              Devnet deposits SOL into your Umbra encrypted vault. Payroll group records are created here; automatic recipient payouts are not enabled yet.
-            </p>
           </div>
-        </div>
 
+        </div>
       </div>
-    </div>
-  )
+    )
 }
