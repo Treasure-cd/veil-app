@@ -2,7 +2,7 @@ from datetime import datetime, time, timedelta, timezone
 from decimal import Decimal
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import Numeric, case, cast, func, literal, select, text
+from sqlalchemy import Numeric, case, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import PaymentIntent
@@ -133,17 +133,21 @@ async def get_dashboard(
         if row.receive_mode in by_privacy:
             by_privacy[row.receive_mode] = {"total_ngn": _fmt(row.total), "count": row.count}
 
+    day_bucket = func.date_trunc(literal_column("'day'"), PaymentIntent.created_at)
+
     daily_rows = (await db.execute(
         select(
-            func.date_trunc("day", PaymentIntent.created_at).label("day"),
+            day_bucket.label("day"),
             func.coalesce(func.sum(ngn), 0).label("total"),
         ).where(
             PaymentIntent.user_id == uid,
             paid,
             PaymentIntent.created_at >= daily_start,
             PaymentIntent.created_at < now,
-        ).group_by(func.date_trunc("day", PaymentIntent.created_at))
+        ).group_by(day_bucket)
     )).all()
+
+
     daily_by_date = {
         (row.day.date() if isinstance(row.day, datetime) else row.day): _fmt(row.total)
         for row in daily_rows
@@ -153,22 +157,23 @@ async def get_dashboard(
          "amount_ngn": daily_by_date.get(daily_start.date() + timedelta(days=offset), "0")}
         for offset in range(30)
     ]
-
     vault_total_result = await db.execute(text("""
-        SELECT COALESCE(SUM(
-            COALESCE((
-                SELECT SUM(COALESCE((recipient.value->>'amountAtomic')::numeric, 0))
-                FROM jsonb_array_elements(CAST(recipients_json AS jsonb)) AS recipient(value)
-            ), 0) * rate_ngn_per_token::numeric
-                / POWER(10, CASE WHEN token = 'USDC' THEN 6 ELSE 9 END),
-            COALESCE((
-                SELECT SUM(COALESCE((recipient.value->>'amountNgn')::numeric, 0))
-                FROM jsonb_array_elements(CAST(recipients_json AS jsonb)) AS recipient(value)
+            SELECT COALESCE(SUM(
+                COALESCE(
+                    COALESCE((
+                        SELECT SUM(COALESCE((recipient.value->>'amountAtomic')::numeric, 0))
+                        FROM jsonb_array_elements(CAST(recipients_json AS jsonb)) AS recipient(value)
+                    ), 0) * rate_ngn_per_token::numeric
+                        / POWER(10::numeric, CASE WHEN token = 'USDC' THEN 6 ELSE 9 END),
+                    COALESCE((
+                        SELECT SUM(COALESCE((recipient.value->>'amountNgn')::numeric, 0))
+                        FROM jsonb_array_elements(CAST(recipients_json AS jsonb)) AS recipient(value)
+                    ), 0)
+                )
             ), 0)
-        ), 0)
-        FROM payroll_groups
-        WHERE user_id = :user_id AND status IN ('locked', 'scheduled')
-    """), {"user_id": uid})
+            FROM payroll_groups
+            WHERE user_id = :user_id AND status IN ('locked', 'scheduled')
+        """), {"user_id": uid})
     vault_locked_ngn = vault_total_result.scalar_one()
 
     recent_rows = (await db.execute(

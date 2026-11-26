@@ -104,3 +104,14 @@ nothing currently sets them.
 5. **The Umbra assumption needs validation.** Private mode depends on Umbra
    crediting its address with a normal token balance. Test a private payment on
    devnet and inspect the transaction in the explorer before the demo.
+
+
+
+Features needed to be alive and well, and tested.
+- Payments (just check)
+- Payroll (not priority)
+- Whatsapp payment intent creation
+- Fossapay off ramping
+- NFC
+- General UX updates, criticism and fixations
+- Update README
