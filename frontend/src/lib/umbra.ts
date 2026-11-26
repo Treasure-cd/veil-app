@@ -49,7 +49,8 @@ function buildBrowserSigner(wallet: WalletContextState) {
   }
 
   const baseSigner = createSignerFromWalletAccount({ wallet: standardWallet, account: walletAccount })
-  const signTransactionFeature = standardWallet.features['solana:signTransaction'] as
+  const features = standardWallet.features as Record<string, unknown>
+  const signTransactionFeature = features['solana:signTransaction'] as
     | {
         signTransaction: (
           ...inputs: Array<{
