@@ -8,7 +8,9 @@ import {
   XCircle,
 } from '@phosphor-icons/react'
 import { Button } from '../ui/Button'
+import { truncateAddress } from '../../lib/format'
 import { formatNgn } from '../../lib/money'
+import { NETWORK } from '../../lib/network'
 import {
   createFiatPayout,
   expireFiatPayment,
@@ -24,6 +26,12 @@ import {
   type FiatPaymentFlow,
   type SupportedBank,
 } from '../../services/fiat'
+import {
+  getPajStatusPresentation,
+  listPajOfframps,
+  reconcilePajOfframp,
+  type PajOfframpOrder,
+} from '../../services/paj'
 
 function formatTimestamp(value: string | null) {
   if (!value) return '—'
@@ -65,6 +73,12 @@ export function PayoutsPanel() {
   const [flowFilter, setFlowFilter] = useState<'all' | FiatPaymentFlow>('all')
   const [busyRowId, setBusyRowId] = useState<string | null>(null)
 
+  const [activitySource, setActivitySource] = useState<'fossapay' | 'paj'>('fossapay')
+  const [pajOrders, setPajOrders] = useState<PajOfframpOrder[]>([])
+  const [pajLoading, setPajLoading] = useState(true)
+  const [pajError, setPajError] = useState<string | null>(null)
+  const [busyPajId, setBusyPajId] = useState<string | null>(null)
+
   const loadBanks = useCallback(async () => {
     setBanksLoading(true)
     setBanksError(null)
@@ -91,10 +105,24 @@ export function PayoutsPanel() {
     }
   }, [])
 
+  const loadPajOrders = useCallback(async () => {
+    setPajLoading(true)
+    setPajError(null)
+    try {
+      const data = await listPajOfframps()
+      setPajOrders(data)
+    } catch (err) {
+      setPajError(err instanceof Error ? err.message : 'Could not load Paj Cash offramp orders.')
+    } finally {
+      setPajLoading(false)
+    }
+  }, [])
+
   useEffect(() => {
     void loadBanks()
     void loadHistory()
-  }, [loadBanks, loadHistory])
+    void loadPajOrders()
+  }, [loadBanks, loadHistory, loadPajOrders])
 
   const filteredBanks = useMemo(() => {
     const query = bankQuery.trim().toLowerCase()
@@ -222,6 +250,19 @@ export function PayoutsPanel() {
       setHistoryError(err instanceof Error ? err.message : 'Could not refresh payment status.')
     } finally {
       setBusyRowId(null)
+    }
+  }
+
+  async function handleReconcilePaj(order: PajOfframpOrder) {
+    setBusyPajId(order.id)
+    setPajError(null)
+    try {
+      const updated = await reconcilePajOfframp(order.id)
+      setPajOrders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+    } catch (err) {
+      setPajError(err instanceof Error ? err.message : 'Could not reconcile Paj offramp status.')
+    } finally {
+      setBusyPajId(null)
     }
   }
 
@@ -460,35 +501,204 @@ export function PayoutsPanel() {
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary/10 px-5 py-4">
           <div>
             <h2 className="font-semibold text-primary">Fiat activity</h2>
-            <p className="mt-0.5 text-xs text-foreground/50">NGN bank-transfer checkouts and master-wallet payouts</p>
+            <p className="mt-0.5 text-xs text-foreground/50">
+              {activitySource === 'fossapay'
+                ? 'NGN bank-transfer checkouts and master-wallet payouts'
+                : 'Multi-token Solana crypto-to-NGN offramp settlements via Paj Cash'}
+            </p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
-            <div className="inline-flex rounded-pill border border-primary/10 bg-background p-0.5" role="group" aria-label="Filter fiat activity">
-              {(['all', 'checkout', 'payout'] as const).map((tab) => (
-                <button
-                  key={tab}
-                  type="button"
-                  aria-pressed={flowFilter === tab}
-                  onClick={() => setFlowFilter(tab)}
-                  className={`min-h-8 rounded-pill px-3 text-xs font-semibold capitalize transition-colors ${
-                    flowFilter === tab ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
-                  }`}
-                >
-                  {tab === 'all' ? 'All' : `${tab}s`}
-                </button>
-              ))}
+            <div className="inline-flex rounded-pill border border-primary/10 bg-background p-0.5" role="tablist" aria-label="Fiat activity source">
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activitySource === 'fossapay'}
+                onClick={() => setActivitySource('fossapay')}
+                className={`min-h-8 rounded-pill px-3 text-xs font-semibold transition-colors ${
+                  activitySource === 'fossapay' ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                }`}
+              >
+                FossaPay
+              </button>
+              <button
+                type="button"
+                role="tab"
+                aria-selected={activitySource === 'paj'}
+                onClick={() => setActivitySource('paj')}
+                className={`min-h-8 rounded-pill px-3 text-xs font-semibold transition-colors ${
+                  activitySource === 'paj' ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                }`}
+              >
+                Paj Offramps
+              </button>
             </div>
+            {activitySource === 'fossapay' && (
+              <div className="inline-flex rounded-pill border border-primary/10 bg-background p-0.5" role="group" aria-label="Filter fiat activity">
+                {(['all', 'checkout', 'payout'] as const).map((tab) => (
+                  <button
+                    key={tab}
+                    type="button"
+                    aria-pressed={flowFilter === tab}
+                    onClick={() => setFlowFilter(tab)}
+                    className={`min-h-8 rounded-pill px-3 text-xs font-semibold capitalize transition-colors ${
+                      flowFilter === tab ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                    }`}
+                  >
+                    {tab === 'all' ? 'All' : `${tab}s`}
+                  </button>
+                ))}
+              </div>
+            )}
             <Button
               size="sm"
               variant="secondary"
-              loading={historyLoading}
+              loading={activitySource === 'fossapay' ? historyLoading : pajLoading}
               leftIcon={<ArrowsClockwise size={15} />}
-              onClick={() => void loadHistory()}
+              onClick={() => void (activitySource === 'fossapay' ? loadHistory() : loadPajOrders())}
             >
               Refresh
             </Button>
           </div>
         </div>
+
+        {activitySource === 'paj' ? (
+          <>
+            {pajError && (
+              <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+                {pajError}
+              </p>
+            )}
+
+            {pajLoading ? (
+              <div className="space-y-3 p-5" role="status" aria-label="Loading Paj offramp orders">
+                {Array.from({ length: 3 }, (_, idx) => (
+                  <div key={idx} className="h-14 animate-pulse rounded-card bg-primary/5" />
+                ))}
+              </div>
+            ) : pajOrders.length === 0 ? (
+              <p className="px-5 py-10 text-center text-sm text-foreground/50">
+                No Paj Cash multi-token offramp orders recorded yet.
+              </p>
+            ) : (
+              <>
+                <div className="hidden overflow-x-auto md:block">
+                  <table className="w-full text-left text-sm">
+                    <thead className="border-b border-primary/10 bg-background text-xs font-medium text-foreground/55">
+                      <tr>
+                        <th className="px-5 py-3">Token</th>
+                        <th className="px-5 py-3">Deposit address</th>
+                        <th className="px-5 py-3">Bank destination</th>
+                        <th className="px-5 py-3">NGN amount</th>
+                        <th className="px-5 py-3">Status</th>
+                        <th className="px-5 py-3">Created</th>
+                        <th className="px-5 py-3 text-right">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-primary/5">
+                      {pajOrders.map((order) => {
+                        const badge = getPajStatusPresentation(order.status)
+                        const busy = busyPajId === order.id
+                        return (
+                          <tr key={order.id} className="hover:bg-primary/[0.02]">
+                            <td className="px-5 py-3.5 font-mono tabular-nums">
+                              <p className="font-semibold text-primary">
+                                {order.tokenAmount ? `${order.tokenAmount} ` : ''}
+                                {order.tokenSymbol}
+                              </p>
+                              {order.txSignature && (
+                                <a
+                                  href={`https://explorer.solana.com/tx/${encodeURIComponent(order.txSignature)}?cluster=${NETWORK}`}
+                                  target="_blank"
+                                  rel="noreferrer"
+                                  className="text-xs text-primary/70 underline underline-offset-2"
+                                >
+                                  tx {truncateAddress(order.txSignature, 4)}
+                                </a>
+                              )}
+                            </td>
+                            <td className="px-5 py-3.5 font-mono text-xs text-foreground/75" title={order.depositAddress}>
+                              {truncateAddress(order.depositAddress, 5)}
+                            </td>
+                            <td className="px-5 py-3.5 text-xs">
+                              <p className="font-medium text-foreground">{order.bankName || '—'}</p>
+                              <p className="font-mono tabular-nums text-foreground/60">
+                                {order.accountNumber || '—'} {order.accountName ? `· ${order.accountName}` : ''}
+                              </p>
+                            </td>
+                            <td className="px-5 py-3.5 font-mono tabular-nums">
+                              <p className="font-semibold text-primary">{formatNgn(order.fiatAmount)}</p>
+                              {order.rate && <p className="text-xs text-foreground/50">₦{order.rate}/USD</p>}
+                            </td>
+                            <td className="px-5 py-3.5">
+                              <span className={`inline-flex rounded-pill px-2.5 py-0.5 text-xs font-medium ${badge.className}`}>
+                                {badge.label}
+                              </span>
+                            </td>
+                            <td className="px-5 py-3.5 text-xs text-foreground/55">{formatTimestamp(order.createdAt)}</td>
+                            <td className="px-5 py-3.5 text-right">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                loading={busy}
+                                leftIcon={<ArrowsClockwise size={14} />}
+                                onClick={() => void handleReconcilePaj(order)}
+                              >
+                                Reconcile
+                              </Button>
+                            </td>
+                          </tr>
+                        )
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+
+                <ul className="divide-y divide-primary/10 md:hidden">
+                  {pajOrders.map((order) => {
+                    const badge = getPajStatusPresentation(order.status)
+                    const busy = busyPajId === order.id
+                    return (
+                      <li key={order.id} className="space-y-3 p-4">
+                        <div className="flex items-start justify-between gap-3">
+                          <div className="min-w-0">
+                            <p className="font-mono text-sm font-semibold text-primary">
+                              {order.tokenAmount ? `${order.tokenAmount} ` : ''}
+                              {order.tokenSymbol}
+                            </p>
+                            <p className="truncate font-mono text-xs text-foreground/60" title={order.depositAddress}>
+                              {truncateAddress(order.depositAddress, 5)}
+                            </p>
+                          </div>
+                          <span className={`inline-flex shrink-0 rounded-pill px-2.5 py-0.5 text-xs font-medium ${badge.className}`}>
+                            {badge.label}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between gap-3 text-sm">
+                          <span className="truncate text-xs text-foreground/65">
+                            {order.bankName || '—'} · <span className="font-mono">{order.accountNumber || '—'}</span>
+                          </span>
+                          <span className="font-mono font-semibold tabular-nums text-primary">
+                            {formatNgn(order.fiatAmount)}
+                          </span>
+                        </div>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          loading={busy}
+                          leftIcon={<ArrowsClockwise size={14} />}
+                          onClick={() => void handleReconcilePaj(order)}
+                        >
+                          Reconcile status
+                        </Button>
+                      </li>
+                    )
+                  })}
+                </ul>
+              </>
+            )}
+          </>
+        ) : (
+          <>
 
         {historyError && (
           <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
@@ -626,6 +836,8 @@ export function PayoutsPanel() {
                 )
               })}
             </ul>
+          </>
+        )}
           </>
         )}
       </section>

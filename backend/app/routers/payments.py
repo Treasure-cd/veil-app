@@ -21,11 +21,16 @@ from app.models.payment import (
     FiatPayment,
     FiatPaymentFlow,
     FiatPaymentStatus,
+    MerchantBankAccount,
+    PajOfframpOrder,
+    PajOrderStatus,
     PaymentIntent,
+    SettlementTarget,
     utc_now,
 )
 from app.models.user import User
 from app.routers.dependencies import get_current_user, get_optional_user
+from app.services.pajcash import PAJ_SOLANA_TOKENS, PajCashError, PajCashService
 from app.services.payment import FossaPayError, FossaPayService
 from app.services.payment_intents import create_payment_intent
 from core.config import settings
@@ -38,6 +43,7 @@ router = APIRouter(
 
 logger = logging.getLogger(__name__)
 _BANKS_CACHE: tuple[float, list[dict[str, Any]]] | None = None
+_PAJ_BANKS_CACHE: tuple[float, list[dict[str, Any]]] | None = None
 _BANKS_CACHE_TTL_SECONDS = 3600
 
 class CreatePaymentIntentRequest(BaseModel):
@@ -46,6 +52,8 @@ class CreatePaymentIntentRequest(BaseModel):
     amount_ngn: Decimal = Field(validation_alias=AliasChoices("amount_ngn", "amountNgn"))
     recipientAddress: str
     receiveMode: Literal["private", "public"] = "private"
+    settlementTarget: Literal["crypto", "fiat"] = "crypto"
+    bankAccountId: Optional[UUID] = None
     memo: Optional[str] = None
     includeFiatCheckout: bool = False
     feeBearer: Literal["customer", "merchant"] = "customer"
@@ -68,9 +76,20 @@ class CreatePaymentIntentRequest(BaseModel):
 
 class ConfirmFundRequest(BaseModel):
     signature: str = Field(min_length=64, max_length=100)
+    pajOfframpOrderId: Optional[UUID] = None
 
 class ConfirmClaimRequest(BaseModel):
     signature: str = Field(min_length=64, max_length=100)
+
+
+class RegisterPajBankAccountRequest(BaseModel):
+    bankCode: str = Field(min_length=1, max_length=100)
+    accountNumber: str = Field(min_length=10, max_length=20)
+    makeDefault: bool = True
+
+
+class CreateIntentPajOfframpRequest(BaseModel):
+    token: str = Field(default="USDC", min_length=1, max_length=64)
 
 
 class CreateFiatCheckoutRequest(BaseModel):
@@ -158,6 +177,100 @@ def _raise_fossapay_http_error(exc: FossaPayError) -> None:
     raise HTTPException(status_code=status_code, detail=exc.message) from exc
 
 
+def _raise_paj_http_error(exc: PajCashError) -> None:
+    status_code = exc.status_code if 400 <= exc.status_code < 500 else 502
+    raise HTTPException(status_code=status_code, detail=exc.message) from exc
+
+
+def format_bank_account(account: MerchantBankAccount, is_owner: bool = True) -> dict:
+    data: dict[str, Any] = {
+        "id": str(account.id),
+        "bankName": account.bank_name,
+        "isDefault": account.is_default,
+    }
+    if is_owner:
+        data.update({
+            "userId": str(account.user_id),
+            "pajAccountId": account.paj_account_id,
+            "bankCode": account.bank_code,
+            "accountNumber": account.account_number,
+            "accountName": account.account_name,
+            "solanaAddress": account.solana_address,
+            "evmAddress": account.evm_address,
+            "createdAt": _utc_iso(account.created_at),
+            "updatedAt": _utc_iso(account.updated_at),
+        })
+    return data
+
+
+def format_paj_offramp(order: PajOfframpOrder, is_owner: bool = True) -> dict:
+    data: dict[str, Any] = {
+        "id": str(order.id),
+        "paymentIntentId": str(order.payment_intent_id) if order.payment_intent_id else None,
+        "chain": order.chain,
+        "mint": order.mint,
+        "tokenSymbol": order.token_symbol,
+        "tokenDecimals": order.token_decimals,
+        "depositAddress": order.deposit_address,
+        "tokenAmount": order.token_amount,
+        "fiatAmount": order.fiat_amount,
+        "currency": order.currency,
+        "rate": order.rate,
+        "feeUsdc": order.fee_usdc,
+        "status": order.status,
+        "txSignature": order.tx_signature,
+        "narration": order.narration,
+        "expiresAt": _utc_iso(order.expires_at),
+        "createdAt": _utc_iso(order.created_at),
+    }
+    if is_owner:
+        data.update({
+            "userId": str(order.user_id),
+            "pajOrderId": order.paj_order_id,
+            "bankAccountId": str(order.bank_account_id) if order.bank_account_id else None,
+            "bankCode": order.bank_code,
+            "bankName": order.bank_name,
+            "accountNumber": order.account_number,
+            "accountName": order.account_name,
+            "failureReason": order.failure_reason,
+            "updatedAt": _utc_iso(order.updated_at),
+        })
+    return data
+
+
+async def _latest_paj_offramp_for_intent(
+    db: AsyncSession, intent_id: UUID
+) -> PajOfframpOrder | None:
+    stmt = (
+        select(PajOfframpOrder)
+        .where(PajOfframpOrder.payment_intent_id == intent_id)
+        .order_by(PajOfframpOrder.created_at.desc())
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def mark_intent_funded_from_paj(
+    db: AsyncSession, order: PajOfframpOrder
+) -> PaymentIntent | None:
+    if (
+        order.status not in (PajOrderStatus.PROCESSING.value, PajOrderStatus.COMPLETED.value)
+        or not order.payment_intent_id
+    ):
+        return None
+    intent = await db.get(PaymentIntent, order.payment_intent_id)
+    expired_candidate = intent is not None and intent.status == "failed" and intent.failure_reason == "expired"
+    if intent and (intent.status == "created" or expired_candidate):
+        intent.status = "funded"
+        intent.failure_reason = None
+        if order.tx_signature and not intent.fund_signature:
+            intent.fund_signature = order.tx_signature
+        intent.updated_at = utc_now()
+        db.add(intent)
+        await db.commit()
+        await db.refresh(intent)
+    return intent
+
+
 def _whole_ngn_from_intent(intent: PaymentIntent) -> int:
     if not intent.amount_ngn:
         raise HTTPException(
@@ -211,6 +324,8 @@ def format_intent(
     intent: PaymentIntent,
     is_owner: bool = True,
     fiat_checkout: FiatPayment | None = None,
+    paj_offramp: PajOfframpOrder | None = None,
+    bank_account: MerchantBankAccount | None = None,
 ) -> dict:
     data = {
         "id": str(intent.id),
@@ -223,6 +338,7 @@ def format_intent(
         "expires_at": intent.expires_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if intent.expires_at else None,
         "recipientAddress": intent.recipient_address,
         "receiveMode": intent.receive_mode,
+        "settlementTarget": intent.settlement_target,
         "memo": intent.memo,
         "status": intent.status,
         # This signature is public on Solana and lets payers inspect the confirmed transfer.
@@ -231,6 +347,16 @@ def format_intent(
         "fiatCheckout": (
             format_fiat_payment(fiat_checkout, is_owner=is_owner)
             if fiat_checkout is not None
+            else None
+        ),
+        "pajOfframp": (
+            format_paj_offramp(paj_offramp, is_owner=is_owner)
+            if paj_offramp is not None
+            else None
+        ),
+        "bankAccount": (
+            format_bank_account(bank_account, is_owner=is_owner)
+            if bank_account is not None
             else None
         ),
     }
@@ -335,14 +461,23 @@ async def verify_transfer(
                 logger.warning("intent memo missing for signature %s", signature_str)
                 return False
 
-        def balance(entries) -> int:
-            total = 0
-            for entry in entries or []:
-                if str(entry.mint) == mint and str(entry.owner) == address:
-                    total += int(entry.ui_token_amount.amount)
-            return total
+        if mint == settings.SOL_MINT:
+            account_keys = tx.transaction.transaction.message.account_keys
+            delta = 0
+            for idx, key in enumerate(account_keys):
+                pubkey_str = str(getattr(key, "pubkey", key))
+                if pubkey_str == address:
+                    delta += int(meta.post_balances[idx]) - int(meta.pre_balances[idx])
+        else:
+            def balance(entries) -> int:
+                total = 0
+                for entry in entries or []:
+                    if str(entry.mint) == mint and str(entry.owner) == address:
+                        total += int(entry.ui_token_amount.amount)
+                return total
 
-        delta = balance(meta.post_token_balances) - balance(meta.pre_token_balances)
+            delta = balance(meta.post_token_balances) - balance(meta.pre_token_balances)
+
         received = delta if direction == "in" else -delta
         if received != int(amount_atomic):
             logger.warning("amount mismatch: expected %s got %s", amount_atomic, received)
@@ -401,23 +536,56 @@ async def create_intent(
                 detail="Bank transfer checkouts require a whole-naira amount of at least ₦1.",
             )
 
+    recipient_address = req.recipientAddress
+    receive_mode = req.receiveMode
+    bank_account: MerchantBankAccount | None = None
+
+    if req.settlementTarget == SettlementTarget.FIAT.value:
+        if req.bankAccountId is not None:
+            bank_account = await db.get(MerchantBankAccount, req.bankAccountId)
+            if not bank_account or bank_account.user_id != current_user.id:
+                raise HTTPException(status_code=404, detail="bank_account_not_found")
+        else:
+            bank_account = (
+                await db.execute(
+                    select(MerchantBankAccount)
+                    .where(MerchantBankAccount.user_id == current_user.id)
+                    .order_by(MerchantBankAccount.is_default.desc(), MerchantBankAccount.created_at.desc())
+                )
+            ).scalars().first()
+            if not bank_account:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Register a Nigerian bank account before creating a fiat-settled request.",
+                )
+        # Route on-chain deposits directly to Paj Cash's bank-account Solana address.
+        recipient_address = bank_account.solana_address
+        receive_mode = "public"
+
     intent = await create_payment_intent(
         db=db,
         user_id=current_user.id,
-        recipient_address=req.recipientAddress,
+        recipient_address=recipient_address,
         amount_ngn=req.amount_ngn,
         merchant_ref=req.merchantRef,
         token=req.token,
         memo=req.memo,
         source="web",
-        receive_mode=req.receiveMode,
+        receive_mode=receive_mode,
+        settlement_target=req.settlementTarget,
+        bank_account_id=bank_account.id if bank_account else None,
     )
     fiat_checkout: FiatPayment | None = None
     if req.includeFiatCheckout:
         fiat_checkout = await _ensure_intent_fiat_checkout(
             db, intent, fee_bearer=req.feeBearer
         )
-    return format_intent(intent, is_owner=True, fiat_checkout=fiat_checkout)
+    return format_intent(
+        intent,
+        is_owner=True,
+        fiat_checkout=fiat_checkout,
+        bank_account=bank_account,
+    )
 
 @router.get("/intents/{intent_id}")
 async def get_intent(
@@ -443,8 +611,130 @@ async def get_intent(
         await db.refresh(intent)
 
     fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+    paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
+    bank_account = (
+        await db.get(MerchantBankAccount, intent.bank_account_id)
+        if intent.bank_account_id
+        else None
+    )
     is_owner = current_user is not None and intent.user_id == current_user.id
-    return format_intent(intent, is_owner=is_owner, fiat_checkout=fiat_checkout)
+    return format_intent(
+        intent,
+        is_owner=is_owner,
+        fiat_checkout=fiat_checkout,
+        paj_offramp=paj_offramp,
+        bank_account=bank_account,
+    )
+
+
+@router.post("/intents/{intent_id}/paj-offramp")
+async def create_intent_paj_offramp(
+    intent_id: str,
+    req: CreateIntentPajOfframpRequest,
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(intent_id)
+    intent = await db.get(PaymentIntent, uuid_id)
+    if not intent:
+        raise HTTPException(status_code=404, detail="intent_not_found")
+    if intent.settlement_target != SettlementTarget.FIAT.value or not intent.bank_account_id:
+        raise HTTPException(
+            status_code=409,
+            detail="This payment request settles in crypto directly; Paj offramp is not enabled.",
+        )
+
+    expiry_utc = intent.expires_at.replace(tzinfo=timezone.utc) if intent.expires_at and intent.expires_at.tzinfo is None else intent.expires_at
+    if intent.status == "created" and expiry_utc and datetime.now(timezone.utc) >= expiry_utc:
+        intent.status = "failed"
+        intent.failure_reason = "expired"
+        intent.updated_at = utc_now()
+        await db.commit()
+        raise HTTPException(status_code=409, detail="This payment request has expired.")
+
+    if intent.status != "created":
+        existing = await _latest_paj_offramp_for_intent(db, intent.id)
+        if existing:
+            is_owner = current_user is not None and intent.user_id == current_user.id
+            return format_paj_offramp(existing, is_owner=is_owner)
+        raise HTTPException(status_code=409, detail="Payment has already been funded or closed.")
+
+    if not intent.amount_ngn:
+        raise HTTPException(status_code=400, detail="Payment intent has no NGN amount.")
+
+    bank_account = await db.get(MerchantBankAccount, intent.bank_account_id)
+    if not bank_account:
+        raise HTTPException(status_code=404, detail="bank_account_not_found")
+
+    service = PajCashService()
+    try:
+        resolved = await service.resolve_solana_token(req.token)
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+
+    existing_for_mint = (
+        await db.execute(
+            select(PajOfframpOrder)
+            .where(
+                PajOfframpOrder.payment_intent_id == intent.id,
+                PajOfframpOrder.mint == resolved["mint"],
+                PajOfframpOrder.status == PajOrderStatus.INIT.value,
+            )
+            .order_by(PajOfframpOrder.created_at.desc())
+        )
+    ).scalars().first()
+    is_owner = current_user is not None and intent.user_id == current_user.id
+    if existing_for_mint:
+        return format_paj_offramp(existing_for_mint, is_owner=is_owner)
+
+    try:
+        order = await service.create_offramp_order(
+            db,
+            user_id=intent.user_id,
+            payment_intent_id=intent.id,
+            bank_account_id=bank_account.id,
+            bank_code=bank_account.bank_code,
+            bank_name=bank_account.bank_name,
+            account_number=bank_account.account_number,
+            account_name=bank_account.account_name,
+            mint=resolved["mint"],
+            token_symbol=resolved["symbol"],
+            token_decimals=resolved["decimals"],
+            fiat_amount=intent.amount_ngn,
+            narration=(intent.memo or intent.merchant_ref)[:100],
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+    return format_paj_offramp(order, is_owner=is_owner)
+
+
+@router.post("/intents/{intent_id}/paj-offramp/reconcile")
+async def reconcile_intent_paj_offramp(
+    intent_id: str,
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(intent_id)
+    intent = await db.get(PaymentIntent, uuid_id)
+    if not intent:
+        raise HTTPException(status_code=404, detail="intent_not_found")
+
+    order = await _latest_paj_offramp_for_intent(db, intent.id)
+    if not order:
+        raise HTTPException(status_code=404, detail="No Paj Cash offramp order exists for this payment.")
+
+    try:
+        updated = await PajCashService().reconcile_offramp_order(db, order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+
+    await mark_intent_funded_from_paj(db, updated)
+    is_owner = current_user is not None and intent.user_id == current_user.id
+    return format_paj_offramp(updated, is_owner=is_owner)
 
 
 @router.post("/intents/{intent_id}/fiat-checkout")
@@ -539,11 +829,28 @@ async def confirm_fund(
     if duplicate.first():
         raise HTTPException(status_code=409, detail="Signature already used")
 
+    verify_mint = intent.mint
+    verify_address = intent.recipient_address
+    verify_atomic = intent.amount_atomic
+    offramp_order: PajOfframpOrder | None = None
+
+    if req.pajOfframpOrderId is not None:
+        offramp_order = await db.get(PajOfframpOrder, req.pajOfframpOrderId)
+        if not offramp_order or offramp_order.payment_intent_id != intent.id:
+            raise HTTPException(status_code=404, detail="paj_offramp_not_found")
+        if not offramp_order.token_amount:
+            raise HTTPException(status_code=400, detail="Offramp order is missing token amount.")
+        verify_mint = offramp_order.mint
+        verify_address = offramp_order.deposit_address
+        verify_atomic = str(
+            int((Decimal(offramp_order.token_amount) * (Decimal(10) ** offramp_order.token_decimals)).to_integral_value())
+        )
+
     is_valid_tx = await verify_transfer(
         req.signature,
-        intent.mint,
-        intent.recipient_address,
-        intent.amount_atomic,
+        verify_mint,
+        verify_address,
+        verify_atomic,
         intent.created_at,
         expected_memo=f"veil:{intent.id}",
         before=intent.expires_at,
@@ -555,6 +862,11 @@ async def confirm_fund(
             intent.updated_at = utc_now()
             await db.commit()
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
+
+    if offramp_order is not None:
+        offramp_order.tx_signature = req.signature
+        offramp_order.updated_at = utc_now()
+        db.add(offramp_order)
 
     intent.status = "funded"
     intent.failure_reason = None
@@ -568,7 +880,7 @@ async def confirm_fund(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Signature already used") from exc
     await db.refresh(intent)
-    return format_intent(intent, is_owner=False)
+    return format_intent(intent, is_owner=False, paj_offramp=offramp_order)
 
 @router.post("/intents/{intent_id}/confirm-claim")
 async def confirm_claim(
@@ -809,3 +1121,130 @@ async def expire_fiat_payment(
     except FossaPayError as exc:
         _raise_fossapay_http_error(exc)
     return format_fiat_payment(updated, is_owner=True)
+
+
+@router.get("/paj/banks")
+async def list_paj_banks(
+    current_user: User = Depends(get_current_user),
+):
+    global _PAJ_BANKS_CACHE
+    now = time.monotonic()
+    if _PAJ_BANKS_CACHE is not None and now - _PAJ_BANKS_CACHE[0] < _BANKS_CACHE_TTL_SECONDS:
+        return _PAJ_BANKS_CACHE[1]
+    try:
+        banks = await PajCashService().get_banks()
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+    _PAJ_BANKS_CACHE = (now, banks)
+    return banks
+
+
+@router.get("/paj/rates")
+async def get_paj_rates():
+    try:
+        rates = await PajCashService().get_rates("NGN")
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+    return {
+        **rates,
+        "tokens": list(PAJ_SOLANA_TOKENS.values()),
+    }
+
+
+@router.get("/paj/bank-accounts")
+async def list_paj_bank_accounts(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    stmt = (
+        select(MerchantBankAccount)
+        .where(MerchantBankAccount.user_id == current_user.id)
+        .order_by(MerchantBankAccount.is_default.desc(), MerchantBankAccount.created_at.desc())
+    )
+    accounts = (await db.execute(stmt)).scalars().all()
+    return [format_bank_account(acc, is_owner=True) for acc in accounts]
+
+
+@router.post("/paj/bank-accounts")
+async def register_paj_bank_account(
+    req: RegisterPajBankAccountRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    try:
+        account = await PajCashService().register_bank_account(
+            db,
+            user_id=current_user.id,
+            bank_code=req.bankCode.strip(),
+            account_number=req.accountNumber.strip(),
+            make_default=req.makeDefault,
+        )
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+    return format_bank_account(account, is_owner=True)
+
+
+@router.delete("/paj/bank-accounts/{account_id}")
+async def delete_paj_bank_account(
+    account_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(account_id)
+    account = await db.get(MerchantBankAccount, uuid_id)
+    if not account or account.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="bank_account_not_found")
+    referenced_intent = (
+        await db.execute(
+            select(PaymentIntent.id).where(PaymentIntent.bank_account_id == account.id).limit(1)
+        )
+    ).first()
+    referenced_order = (
+        await db.execute(
+            select(PajOfframpOrder.id).where(PajOfframpOrder.bank_account_id == account.id).limit(1)
+        )
+    ).first()
+    if referenced_intent or referenced_order:
+        raise HTTPException(
+            status_code=409,
+            detail="Bank account is linked to existing payments; add and set a different default bank account instead.",
+        )
+    await db.delete(account)
+    await db.commit()
+    return {"ok": True}
+
+
+@router.get("/paj/offramps")
+async def list_paj_offramps(
+    limit: int = Query(default=50, ge=1, le=100),
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    stmt = (
+        select(PajOfframpOrder)
+        .where(PajOfframpOrder.user_id == current_user.id)
+        .order_by(PajOfframpOrder.created_at.desc())
+        .limit(limit)
+    )
+    orders = (await db.execute(stmt)).scalars().all()
+    return [format_paj_offramp(order, is_owner=True) for order in orders]
+
+
+@router.post("/paj/offramps/{order_id}/reconcile")
+async def reconcile_paj_offramp(
+    order_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(order_id)
+    order = await db.get(PajOfframpOrder, uuid_id)
+    if not order or order.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="paj_offramp_not_found")
+    try:
+        updated = await PajCashService().reconcile_offramp_order(db, order)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except PajCashError as exc:
+        _raise_paj_http_error(exc)
+    await mark_intent_funded_from_paj(db, updated)
+    return format_paj_offramp(updated, is_owner=True)

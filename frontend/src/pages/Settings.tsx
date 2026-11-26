@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { CheckCircle, Clock, WhatsappLogo, X } from '@phosphor-icons/react'
 import { api } from '../services/api'
 import { Button } from '../components/ui/Button'
+import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
 
 interface WhatsAppStatus {
   linked: boolean
@@ -163,6 +164,8 @@ function Settings() {
           <p role="alert" className="mt-3 text-sm text-red-700">{linkError}</p>
         )}
       </section>
+
+      <BankAccountSetupCard />
 
       <dialog
         ref={dialogRef}

@@ -11,17 +11,27 @@ import { Button } from '../components/ui/Button'
 import { QRCodeSVG } from 'qrcode.react'
 import { useAuth } from '../auth/useAuth'
 import { api } from '../services/api'
+import { truncateAddress } from '../lib/format'
 import { NETWORK, NETWORK_LABEL } from '../lib/network'
 import { Money } from '../components/ui/Money'
+import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
 import { BankTransferCard } from '../components/payments/BankTransferCard'
 import { PayoutsPanel } from '../components/payments/PayoutsPanel'
 import { reconcileFiatPayment, type FeeBearer, type FiatPayment } from '../services/fiat'
+import {
+  getPajRates,
+  listMerchantBankAccounts,
+  type MerchantBankAccount,
+} from '../services/paj'
 
 interface PaymentIntent {
   id: string
   amount_ngn: string
   amountAtomic: string
+  recipientAddress: string
+  settlementTarget?: 'crypto' | 'fiat'
   fiatCheckout?: FiatPayment | null
+  bankAccount?: MerchantBankAccount | null
 }
 
 interface Rates {
@@ -42,6 +52,12 @@ export default function Payments() {
   const [memo, setMemo] = useState('')
   const [includeFiatCheckout, setIncludeFiatCheckout] = useState(true)
   const [feeBearer, setFeeBearer] = useState<FeeBearer>('customer')
+  const [settlementTarget, setSettlementTarget] = useState<'crypto' | 'fiat'>('crypto')
+  const [bankAccounts, setBankAccounts] = useState<MerchantBankAccount[]>([])
+  const [selectedBankAccountId, setSelectedBankAccountId] = useState('')
+  const [bankAccountsLoading, setBankAccountsLoading] = useState(true)
+  const [showAddBankForm, setShowAddBankForm] = useState(false)
+  const [pajRate, setPajRate] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [checkingFiat, setCheckingFiat] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -50,8 +66,12 @@ export default function Payments() {
     amountNgn: string
     tokenAmount: string
     fiatCheckout: FiatPayment | null
+    settlementTarget: 'crypto' | 'fiat'
+    recipientAddress: string
+    bankAccount: MerchantBankAccount | null
   } | null>(null)
   const [copied, setCopied] = useState(false)
+  const [copiedDeposit, setCopiedDeposit] = useState(false)
 
   useEffect(() => {
     let active = true
@@ -66,13 +86,50 @@ export default function Payments() {
         if (active) setRateError(true)
       }
     }
+    const loadPajState = async () => {
+      setBankAccountsLoading(true)
+      try {
+        const [accounts, pajRates] = await Promise.all([
+          listMerchantBankAccounts().catch(() => [] as MerchantBankAccount[]),
+          getPajRates().catch(() => null),
+        ])
+        if (!active) return
+        setBankAccounts(accounts)
+        const preferred = accounts.find((acc) => acc.isDefault) ?? accounts[0]
+        setSelectedBankAccountId(preferred?.id ?? '')
+        if (pajRates?.offRampRate?.rate) {
+          setPajRate(pajRates.offRampRate.rate)
+        }
+      } finally {
+        if (active) setBankAccountsLoading(false)
+      }
+    }
     void loadRate()
+    void loadPajState()
     const interval = window.setInterval(() => void loadRate(), 60_000)
     return () => {
       active = false
       window.clearInterval(interval)
     }
   }, [])
+
+  const selectedBankAccount = useMemo(
+    () =>
+      bankAccounts.find((acc) => acc.id === selectedBankAccountId) ??
+      bankAccounts.find((acc) => acc.isDefault) ??
+      bankAccounts[0] ??
+      null,
+    [bankAccounts, selectedBankAccountId],
+  )
+
+  function handleBankAccountsChanged(accounts: MerchantBankAccount[]) {
+    setBankAccounts(accounts)
+    setSelectedBankAccountId((current) => {
+      if (accounts.some((acc) => acc.id === current)) return current
+      return (accounts.find((acc) => acc.isDefault) ?? accounts[0])?.id ?? ''
+    })
+    if (accounts.length > 0) setShowAddBankForm(false)
+  }
 
   const tokenEstimate = useMemo(() => {
     const ngn = Number(amount)
@@ -100,6 +157,10 @@ export default function Payments() {
       setError('Sign in with the wallet that should receive this payment.')
       return
     }
+    if (settlementTarget === 'fiat' && !selectedBankAccount) {
+      setError('Link a Nigerian bank account below before creating a fiat-settled payment link.')
+      return
+    }
 
     setIsLoading(true)
     try {
@@ -114,6 +175,10 @@ export default function Payments() {
           memo: memo.trim() || 'Payment request',
           includeFiatCheckout,
           feeBearer,
+          settlementTarget,
+          ...(settlementTarget === 'fiat' && selectedBankAccount
+            ? { bankAccountId: selectedBankAccount.id }
+            : {}),
         }),
       })
       if (!intent.id) throw new Error('The payment request was created without an ID.')
@@ -121,12 +186,25 @@ export default function Payments() {
         amountNgn: intent.amount_ngn,
         tokenAmount: (Number(intent.amountAtomic) / 1e6).toString(),
         fiatCheckout: intent.fiatCheckout ?? null,
+        settlementTarget: intent.settlementTarget ?? settlementTarget,
+        recipientAddress: intent.recipientAddress,
+        bankAccount: intent.bankAccount ?? (settlementTarget === 'fiat' ? selectedBankAccount : null),
       })
       setGeneratedLink(new URL(`/pay/${intent.id}`, window.location.origin).toString())
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not create the payment request.')
     } finally {
       setIsLoading(false)
+    }
+  }
+
+  async function copyDepositAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address)
+      setCopiedDeposit(true)
+      window.setTimeout(() => setCopiedDeposit(false), 2000)
+    } catch {
+      setError('Could not copy the deposit address.')
     }
   }
 
@@ -209,8 +287,21 @@ export default function Payments() {
             </div>
             <h2 className="mt-4 text-2xl font-semibold tracking-tight text-primary">Payment link ready</h2>
             <p className="mx-auto mt-2 max-w-md text-sm text-foreground/65">
-              Share this checkout link. Your customer does not need a Veil account and can pay via{' '}
-              {generatedPayment?.fiatCheckout ? 'bank transfer or a Solana wallet' : 'a Solana wallet'}.
+              {generatedPayment?.settlementTarget === 'fiat' ? (
+                <>
+                  Share this checkout link. Your customer can pay with USDC, SOL, USDT, USDG
+                  {generatedPayment.fiatCheckout ? ', or Nigerian bank transfer' : ''}; crypto deposits settle in NGN
+                  to{' '}
+                  {generatedPayment.bankAccount
+                    ? `${generatedPayment.bankAccount.bankName} · ${generatedPayment.bankAccount.accountNumber}`
+                    : 'your linked bank account'}.
+                </>
+              ) : (
+                <>
+                  Share this checkout link. Your customer does not need a Veil account and can pay via{' '}
+                  {generatedPayment?.fiatCheckout ? 'bank transfer or a Solana wallet' : 'a Solana wallet'}.
+                </>
+              )}
             </p>
             {generatedPayment && (
               <div className="mt-4 flex justify-center">
@@ -242,6 +333,38 @@ export default function Payments() {
                 {copied ? 'Copied' : 'Copy'}
               </Button>
             </div>
+
+            {generatedPayment?.settlementTarget === 'fiat' && (
+              <div className="mx-auto mt-6 max-w-lg rounded-card border border-primary/15 bg-background p-4 text-left">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-primary">Auto-offramp to Nigerian bank (Paj Cash)</p>
+                  <span className="rounded-pill bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                    Any Solana token → NGN
+                  </span>
+                </div>
+                {generatedPayment.bankAccount && (
+                  <p className="mt-1 text-xs text-foreground/70">
+                    {generatedPayment.bankAccount.bankName} ·{' '}
+                    <span className="font-mono tabular-nums">{generatedPayment.bankAccount.accountNumber}</span>
+                    {generatedPayment.bankAccount.accountName ? ` · ${generatedPayment.bankAccount.accountName}` : ''}
+                  </p>
+                )}
+                <div className="mt-3 flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-white px-3 py-2">
+                  <div className="min-w-0">
+                    <p className="text-[11px] uppercase tracking-wider text-foreground/50">Permanent Solana Mainnet deposit address</p>
+                    <p className="truncate font-mono text-xs text-primary">{generatedPayment.recipientAddress}</p>
+                  </div>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    onClick={() => void copyDepositAddress(generatedPayment.recipientAddress)}
+                    leftIcon={copiedDeposit ? <CheckCircle size={14} /> : <Copy size={14} />}
+                  >
+                    {copiedDeposit ? 'Copied' : 'Copy'}
+                  </Button>
+                </div>
+              </div>
+            )}
 
             {generatedPayment?.fiatCheckout && (
               <div className="mx-auto mt-6 max-w-lg">
@@ -312,9 +435,11 @@ export default function Payments() {
                 <div className="space-y-1.5">
                   <span className="text-sm font-medium">Rails</span>
                   <div className="flex h-11 items-center rounded-card border border-primary/15 bg-primary/5 px-3 text-sm font-medium text-primary">
-                    {includeFiatCheckout
-                      ? `NGN Bank Transfer · USDC (${NETWORK_LABEL[NETWORK]})`
-                      : `NGN → USDC · ${NETWORK_LABEL[NETWORK]}`}
+                    {settlementTarget === 'fiat'
+                      ? `${includeFiatCheckout ? 'Bank Transfer · ' : ''}Multi-token Solana → NGN`
+                      : includeFiatCheckout
+                        ? `NGN Bank Transfer · USDC (${NETWORK_LABEL[NETWORK]})`
+                        : `NGN → USDC · ${NETWORK_LABEL[NETWORK]}`}
                   </div>
                 </div>
               </div>
@@ -384,25 +509,102 @@ export default function Payments() {
               </div>
 
               <div className="border-t border-primary/10 pt-5">
-                <p className="text-sm font-medium">Settlement</p>
+                <p className="text-sm font-medium">How you receive funds</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <div className="rounded-card border border-primary/20 bg-primary/5 p-4">
+                  <button
+                    type="button"
+                    aria-pressed={settlementTarget === 'crypto'}
+                    onClick={() => setSettlementTarget('crypto')}
+                    className={`rounded-card border p-4 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                      settlementTarget === 'crypto'
+                        ? 'border-primary/35 bg-primary/5'
+                        : 'border-primary/10 bg-background hover:border-primary/25'
+                    }`}
+                  >
                     <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-                      <GlobeHemisphereWest size={17} /> Standard transfer
+                      <GlobeHemisphereWest size={17} /> Receive Crypto (USDC)
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-foreground/60">
-                      Bank transfers settle via FossaPay; crypto transfers settle directly on-chain.
+                      {user?.address
+                        ? `Crypto transfers land directly in your wallet (${truncateAddress(user.address)}).`
+                        : 'Crypto transfers settle directly into your connected Solana wallet.'}
                     </p>
-                  </div>
-                  <div className="rounded-card border border-dashed border-primary/15 bg-background p-4 opacity-75">
-                    <p className="flex items-center gap-2 text-sm font-medium text-foreground/55">
-                      <LockKey size={17} /> Private settlement
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={settlementTarget === 'fiat'}
+                    onClick={() => setSettlementTarget('fiat')}
+                    className={`rounded-card border p-4 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                      settlementTarget === 'fiat'
+                        ? 'border-primary/35 bg-primary/5'
+                        : 'border-primary/10 bg-background hover:border-primary/25'
+                    }`}
+                  >
+                    <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+                      <Bank size={17} weight="fill" /> Receive Fiat / NGN (Paj Cash)
                     </p>
-                    <p className="mt-1 text-xs leading-relaxed text-foreground/50">
-                      Private transfers are not available yet.
+                    <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                      Payers can send USDC, SOL, USDT, or USDG and Paj Cash settles NGN directly to your Nigerian bank account.
                     </p>
-                  </div>
+                  </button>
                 </div>
+
+                {settlementTarget === 'fiat' && (
+                  <div className="mt-4 space-y-3">
+                    {bankAccountsLoading ? (
+                      <div className="h-20 animate-pulse rounded-card bg-primary/5" role="status" aria-label="Loading linked bank accounts" />
+                    ) : bankAccounts.length > 0 ? (
+                      <div className="space-y-3 rounded-card border border-primary/15 bg-background p-4">
+                        <div className="flex flex-wrap items-center justify-between gap-2">
+                          <label htmlFor="paj-bank-account-select" className="text-xs font-semibold text-primary">
+                            Destination Nigerian bank account
+                          </label>
+                          <button
+                            type="button"
+                            onClick={() => setShowAddBankForm((open) => !open)}
+                            className="text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80"
+                          >
+                            {showAddBankForm ? 'Hide registration form' : '+ Link another account'}
+                          </button>
+                        </div>
+                        <select
+                          id="paj-bank-account-select"
+                          value={selectedBankAccount?.id ?? ''}
+                          onChange={(event) => setSelectedBankAccountId(event.target.value)}
+                          className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                        >
+                          {bankAccounts.map((acc) => (
+                            <option key={acc.id} value={acc.id}>
+                              {acc.bankName} · {acc.accountNumber} · {acc.accountName}
+                              {acc.isDefault ? ' (Default)' : ''}
+                            </option>
+                          ))}
+                        </select>
+                        {selectedBankAccount?.solanaAddress && (
+                          <p className="text-xs text-foreground/60">
+                            Auto-offramp address:{' '}
+                            <span className="font-mono text-primary">
+                              {truncateAddress(selectedBankAccount.solanaAddress, 6)}
+                            </span>
+                            {' · '}Solana Mainnet tokens deposited here settle to {selectedBankAccount.bankName}.
+                          </p>
+                        )}
+                        {showAddBankForm && (
+                          <div className="pt-2">
+                            <BankAccountSetupCard compact onAccountChanged={handleBankAccountsChanged} />
+                          </div>
+                        )}
+                      </div>
+                    ) : (
+                      <BankAccountSetupCard compact onAccountChanged={handleBankAccountsChanged} />
+                    )}
+                  </div>
+                )}
+
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-foreground/50">
+                  <LockKey size={14} aria-hidden="true" />
+                  Private wallet settlement is not available yet.
+                </p>
               </div>
             </section>
 
@@ -417,9 +619,17 @@ export default function Payments() {
                   className="my-2 max-w-full break-all text-4xl font-semibold tracking-tight text-primary"
                   primaryClassName="text-4xl"
                 />
-                <p className="mt-1 text-xs text-foreground/50">
+                <span className="mt-1 inline-flex rounded-pill bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
+                  {settlementTarget === 'fiat' ? 'Settles to NGN Bank (Paj Cash)' : 'Settles to Crypto Wallet'}
+                </span>
+                <p className="mt-2 text-xs text-foreground/50">
                   {rate ? 'Live estimate · rate locks for 30 minutes' : rateError ? 'Rate unavailable' : 'Loading live rate…'}
                 </p>
+                {settlementTarget === 'fiat' && pajRate && (
+                  <p className="mt-1 font-mono text-xs text-foreground/60 tabular-nums">
+                    Paj offramp reference: ₦{pajRate.toLocaleString('en-NG')}/USD
+                  </p>
+                )}
                 <p className="mt-1 max-w-full break-words text-sm text-foreground/70">{memo.trim() || 'Payment request'}</p>
               </div>
               <Button

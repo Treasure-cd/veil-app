@@ -29,6 +29,37 @@ class FiatPaymentStatus(StrEnum):
     REVERSED = "reversed"
 
 
+class SettlementTarget(StrEnum):
+    CRYPTO = "crypto"
+    FIAT = "fiat"
+
+
+class PajOrderStatus(StrEnum):
+    INIT = "INIT"
+    PROCESSING = "PROCESSING"
+    COMPLETED = "COMPLETED"
+    ERROR = "ERROR"
+
+
+class MerchantBankAccount(SQLModel, table=True):
+    """Nigerian bank account registered with Paj Cash for auto-offramp payouts."""
+
+    __tablename__ = "merchant_bank_accounts"
+
+    id: UUID = Field(primary_key=True, default_factory=uuid4)
+    user_id: UUID = Field(..., foreign_key="user.id", index=True)
+    paj_account_id: str = Field(..., index=True)
+    bank_code: str = Field(...)
+    bank_name: str = Field(...)
+    account_number: str = Field(..., index=True)
+    account_name: str = Field(...)
+    solana_address: str = Field(..., index=True)
+    evm_address: Optional[str] = Field(default=None)
+    is_default: bool = Field(default=True, index=True)
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
 class PaymentIntent(SQLModel, table=True):
     __tablename__ = "payment_intents"
     id: UUID = Field(primary_key=True, default_factory=uuid4)
@@ -41,6 +72,10 @@ class PaymentIntent(SQLModel, table=True):
     expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     recipient_address: str = Field(...)
     receive_mode: str = Field(default="private")
+    settlement_target: str = Field(default=SettlementTarget.CRYPTO)
+    bank_account_id: Optional[UUID] = Field(
+        default=None, foreign_key="merchant_bank_accounts.id", index=True
+    )
     memo: Optional[str] = Field(default=None)
     status: str = Field(default="created")
     created_at: datetime = Field(default_factory=utc_now)
@@ -122,3 +157,42 @@ class FossaPayWebhookEvent(SQLModel, table=True):
         default_factory=utc_now_aware,
         sa_column=Column(DateTime(timezone=True), nullable=False),
     )
+
+
+class PajOfframpOrder(SQLModel, table=True):
+    """Tracks Paj Cash crypto-to-NGN offramp orders for fiat-settled merchants."""
+
+    __tablename__ = "paj_offramp_orders"
+
+    id: UUID = Field(primary_key=True, default_factory=uuid4)
+    user_id: UUID = Field(..., foreign_key="user.id", index=True)
+    payment_intent_id: Optional[UUID] = Field(
+        default=None, foreign_key="payment_intents.id", index=True
+    )
+    bank_account_id: Optional[UUID] = Field(
+        default=None, foreign_key="merchant_bank_accounts.id", index=True
+    )
+    paj_order_id: Optional[str] = Field(default=None, unique=True, index=True)
+    chain: str = Field(default="SOLANA")
+    mint: str = Field(...)
+    token_symbol: str = Field(...)
+    token_decimals: int = Field(default=6)
+    deposit_address: str = Field(..., index=True)
+    token_amount: Optional[str] = Field(default=None)
+    fiat_amount: Optional[str] = Field(default=None)
+    currency: str = Field(default="NGN")
+    rate: Optional[str] = Field(default=None)
+    fee_usdc: Optional[str] = Field(default=None)
+    bank_code: str = Field(...)
+    bank_name: Optional[str] = Field(default=None)
+    account_number: str = Field(...)
+    account_name: Optional[str] = Field(default=None)
+    status: str = Field(default=PajOrderStatus.INIT, index=True)
+    tx_signature: Optional[str] = Field(default=None)
+    narration: Optional[str] = Field(default=None, max_length=100)
+    failure_reason: Optional[str] = Field(default=None)
+    expires_at: Optional[datetime] = Field(
+        default=None, sa_column=Column(DateTime(timezone=True), nullable=True)
+    )
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)

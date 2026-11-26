@@ -42,6 +42,9 @@ class Settings(BaseSettings):
     FOSSAPAY_SECRET:str =Field(...)
     FOSSAPAY_WEBHOOK_SECRET:str = Field(...)
     FOSSAPAY_BASE_URL:str = Field(default="https://api-production.fossapay.com")
+    PAJCASH_APIKEY: str | None = Field(default=None)
+    PAJCASH_BASE_URL: str = Field(default="https://api.paj.cash")
+    PAJCASH_WEBHOOK_SECRET: str | None = Field(default=None)
 
     @property
     def allowed_origins_list(self) -> List[str]:

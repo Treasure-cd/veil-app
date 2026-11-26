@@ -11,8 +11,10 @@ import {
 } from '@solana/web3.js'
 import {
   ArrowSquareOut,
+  ArrowsClockwise,
   Bank,
   CheckCircle,
+  Copy,
   GlobeHemisphereWest,
   ShieldCheck,
   Wallet,
@@ -31,8 +33,17 @@ import {
   reconcileIntentFiatCheckout,
   type FiatPayment,
 } from '../services/fiat'
+import {
+  createIntentPajOfframp,
+  getPajStatusPresentation,
+  reconcileIntentPajOfframp,
+  type MerchantBankAccount,
+  type PajOfframpOrder,
+} from '../services/paj'
 import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, USDC_MINT } from '../lib/network'
 
+const SOL_MINT = 'So11111111111111111111111111111111111111112'
+const PAJ_TOKENS = ['USDC', 'SOL', 'USDT', 'USDG'] as const
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
@@ -51,11 +62,14 @@ interface InvoiceData {
   expires_at?: string | null
   recipientAddress: string
   receiveMode: string
+  settlementTarget?: 'crypto' | 'fiat'
   memo: string | null
   status: string
   fundSignature?: string | null
   failureReason?: string | null
   fiatCheckout?: FiatPayment | null
+  pajOfframp?: PajOfframpOrder | null
+  bankAccount?: MerchantBankAccount | null
 }
 
 async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -129,6 +143,16 @@ function formatAmount(amountAtomic: string, decimals: number) {
   return `${whole}${trimmedFraction ? `.${trimmedFraction}` : ''}`
 }
 
+function decimalToAtomic(value: string, decimals: number): bigint {
+  const cleaned = value.trim()
+  if (!/^\d+(?:\.\d+)?$/.test(cleaned)) {
+    throw new Error('Invalid token amount from payment quote.')
+  }
+  const [wholePart, fracPart = ''] = cleaned.split('.')
+  const paddedFrac = fracPart.slice(0, decimals).padEnd(decimals, '0')
+  return BigInt(wholePart) * 10n ** BigInt(decimals) + BigInt(paddedFrac || '0')
+}
+
 export default function Checkout() {
   const { id } = useParams()
   const { connection } = useConnection()
@@ -151,6 +175,12 @@ export default function Checkout() {
   const [fiatLoading, setFiatLoading] = useState(false)
   const [fiatChecking, setFiatChecking] = useState(false)
   const [fiatError, setFiatError] = useState<string | null>(null)
+  const [pajTokenChoice, setPajTokenChoice] = useState<string>('USDC')
+  const [customMint, setCustomMint] = useState('')
+  const [pajLoading, setPajLoading] = useState(false)
+  const [pajChecking, setPajChecking] = useState(false)
+  const [pajError, setPajError] = useState<string | null>(null)
+  const [copiedPajAddress, setCopiedPajAddress] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [paymentError, setPaymentError] = useState<string | null>(null)
   const [confirmedSignature, setConfirmedSignature] = useState<string | null>(null)
@@ -178,8 +208,17 @@ export default function Checkout() {
         if (!active) return
         setInvoice(data)
         if (data.fundSignature) setConfirmedSignature(data.fundSignature)
+        if (data.pajOfframp) {
+          const upper = data.pajOfframp.tokenSymbol.toUpperCase()
+          if (PAJ_TOKENS.includes(upper as (typeof PAJ_TOKENS)[number])) {
+            setPajTokenChoice(upper)
+          } else {
+            setPajTokenChoice('CUSTOM')
+            setCustomMint(data.pajOfframp.mint)
+          }
+        }
         const wholeNgn = data.amount_ngn ? /^\d+$/.test(data.amount_ngn) && Number(data.amount_ngn) >= 1 : false
-        if (data.fiatCheckout || wholeNgn) setPayMethod('bank')
+        if (data.fiatCheckout || (wholeNgn && data.settlementTarget !== 'fiat')) setPayMethod('bank')
         else setPayMethod('wallet')
       })
       .catch((err: unknown) => {
@@ -207,6 +246,7 @@ export default function Checkout() {
   const invoiceId = invoice?.id
   const invoiceStatus = invoice?.status
   const fiatCheckoutStatus = invoice?.fiatCheckout?.status
+  const pajOrderStatus = invoice?.pajOfframp?.status
 
   const handleReconcileFiat = useCallback(async () => {
     if (!invoiceId) return
@@ -229,6 +269,28 @@ export default function Checkout() {
     }
   }, [invoiceId])
 
+  const handleReconcilePaj = useCallback(async () => {
+    if (!invoiceId) return
+    setPajChecking(true)
+    setPajError(null)
+    try {
+      const updated = await reconcileIntentPajOfframp(invoiceId)
+      setInvoice((prev) => {
+        if (!prev) return prev
+        return {
+          ...prev,
+          pajOfframp: updated,
+          status: updated.status === 'COMPLETED' ? 'funded' : prev.status,
+          fundSignature: updated.txSignature ?? prev.fundSignature,
+        }
+      })
+    } catch (err) {
+      setPajError(err instanceof Error ? err.message : 'Could not check Paj Cash offramp status.')
+    } finally {
+      setPajChecking(false)
+    }
+  }, [invoiceId])
+
   useEffect(() => {
     if (!invoiceId || invoiceStatus !== 'created' || (fiatCheckoutStatus !== 'pending' && fiatCheckoutStatus !== 'processing')) {
       return
@@ -238,6 +300,16 @@ export default function Checkout() {
     }, 8000)
     return () => window.clearInterval(interval)
   }, [invoiceId, invoiceStatus, fiatCheckoutStatus, handleReconcileFiat])
+
+  useEffect(() => {
+    if (!invoiceId || invoiceStatus !== 'created' || (pajOrderStatus !== 'INIT' && pajOrderStatus !== 'PROCESSING')) {
+      return
+    }
+    const interval = window.setInterval(() => {
+      void handleReconcilePaj()
+    }, 8000)
+    return () => window.clearInterval(interval)
+  }, [invoiceId, invoiceStatus, pajOrderStatus, handleReconcilePaj])
 
   useEffect(() => {
     if (!pendingConnect || !wallet || connected || connecting) return
@@ -268,29 +340,91 @@ export default function Checkout() {
     }
   }
 
+  async function handleCreatePajOrder(tokenArg?: string) {
+    if (!invoice) return
+    const chosen = (tokenArg ?? (pajTokenChoice === 'CUSTOM' ? customMint : pajTokenChoice)).trim()
+    if (!chosen) {
+      setPajError('Select a token or enter a valid Solana token mint address.')
+      return
+    }
+    setPajLoading(true)
+    setPajError(null)
+    setPaymentError(null)
+    try {
+      const order = await createIntentPajOfframp(invoice.id, chosen)
+      setInvoice((prev) => (prev ? { ...prev, pajOfframp: order } : prev))
+      setPendingTransaction(null)
+    } catch (err) {
+      setPajError(err instanceof Error ? err.message : 'Could not prepare Paj Cash offramp quote.')
+    } finally {
+      setPajLoading(false)
+    }
+  }
+
+  async function copyPajAddress(address: string) {
+    try {
+      await navigator.clipboard.writeText(address)
+      setCopiedPajAddress(true)
+      window.setTimeout(() => setCopiedPajAddress(false), 2000)
+    } catch {
+      setPajError('Could not copy deposit address.')
+    }
+  }
+
   async function handlePay() {
     if (!invoice || !publicKey || !connected) return
     setPaymentError(null)
     setPaying(true)
     let paymentPhase = 'Preparing the payment'
+    const isFiatSettlement = invoice.settlementTarget === 'fiat'
+    const activeOrder = isFiatSettlement ? invoice.pajOfframp ?? null : null
     try {
       let pending = pendingTransaction
       if (!pending) {
         const rpcEndpoint = safeRpcEndpoint(connection.rpcEndpoint)
+        let payMint = invoice.mint
+        let paySymbol = TOKENS[invoice.mint]?.symbol ?? 'USDC'
+        let payDecimals = TOKENS[invoice.mint]?.decimals ?? 6
+        let amount = 0n
+        let recipient: PublicKey
+
+        if (isFiatSettlement) {
+          if (NETWORK !== 'mainnet-beta') {
+            throw new Error(
+              `Paj Cash settles on Solana Mainnet, while this app is configured for ${NETWORK_LABEL[NETWORK]}. Send funds manually on Mainnet to the Paj deposit address or switch SOLANA_NETWORK to mainnet-beta.`,
+            )
+          }
+          if (!activeOrder || !activeOrder.tokenAmount) {
+            throw new Error('Generate a Paj Cash payment quote first to lock the deposit address and token amount.')
+          }
+          payMint = activeOrder.mint
+          paySymbol = activeOrder.tokenSymbol
+          payDecimals = activeOrder.tokenDecimals
+          amount = decimalToAtomic(activeOrder.tokenAmount, payDecimals)
+          recipient = new PublicKey(activeOrder.depositAddress)
+        } else {
+          if (invoice.mint !== USDC_MINT) {
+            throw new Error(
+              `This payment request uses a different USDC mint than the configured ${NETWORK_LABEL[NETWORK]} network. Ask the merchant to create a new payment link on ${NETWORK_LABEL[NETWORK]}.`,
+            )
+          }
+          const token = TOKENS[invoice.mint]
+          if (!token) throw new Error('This checkout uses a token that is not supported on this network.')
+          paySymbol = token.symbol
+          payDecimals = token.decimals
+          amount = BigInt(invoice.amountAtomic)
+          recipient = new PublicKey(invoice.recipientAddress)
+        }
+
         console.info('[Veil checkout] payment network', {
           configuredNetwork: NETWORK,
           rpcEndpoint,
-          intentMint: invoice.mint,
-          expectedUsdcMint: USDC_MINT,
+          payMint,
+          paySymbol,
+          settlementTarget: invoice.settlementTarget ?? 'crypto',
           payer: publicKey.toBase58(),
         })
-        if (invoice.mint !== USDC_MINT) {
-          throw new Error(
-            `This payment request uses a different USDC mint than the configured ${NETWORK_LABEL[NETWORK]} network. Ask the merchant to create a new payment link on ${NETWORK_LABEL[NETWORK]}.`,
-          )
-        }
-        const token = TOKENS[invoice.mint]
-        if (!token) throw new Error('This checkout uses a token that is not supported on this network.')
+
         let genesisHash: string
         paymentPhase = 'Checking the Solana RPC cluster'
         try {
@@ -315,102 +449,110 @@ export default function Checkout() {
             `The configured Solana RPC is connected to a different cluster than ${NETWORK_LABEL[NETWORK]}. Check SOLANA_NETWORK and SOLANA_RPC_URL.`,
           )
         }
-        const amount = BigInt(invoice.amountAtomic)
+
         if (amount <= 0n || amount > 18_446_744_073_709_551_615n) {
           throw new Error('This payment amount is invalid.')
         }
-        const recipient = new PublicKey(invoice.recipientAddress)
         if (publicKey.equals(recipient)) {
           throw new Error('You cannot pay your own wallet. Ask the merchant to use a different receiving wallet.')
         }
+
         const instructions: TransactionInstruction[] = []
 
-        const mint = new PublicKey(invoice.mint)
-        const payerAta = await associatedTokenAddress(publicKey, mint)
-        const destination = await associatedTokenAddress(recipient, mint)
-        console.info('[Veil checkout] payer token account lookup', {
-          configuredNetwork: NETWORK,
-          rpcEndpoint,
-          mint: invoice.mint,
-          payer: publicKey.toBase58(),
-          payerAta: payerAta.toBase58(),
-        })
-        let payerTokenAccounts: Awaited<ReturnType<typeof connection.getParsedTokenAccountsByOwner>>
-        paymentPhase = 'Looking up your USDC token accounts'
-        try {
-          payerTokenAccounts = await connection.getParsedTokenAccountsByOwner(
-            publicKey,
-            { mint },
-            'confirmed',
+        if (payMint === SOL_MINT) {
+          paymentPhase = 'Checking your SOL balance'
+          const balanceLamports = BigInt(await connection.getBalance(publicKey, 'confirmed'))
+          if (balanceLamports < amount) {
+            throw new Error(
+              `Your wallet has ${formatAmount(balanceLamports.toString(), 9)} SOL on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(amount.toString(), 9)} SOL.`,
+            )
+          }
+          if (amount > BigInt(Number.MAX_SAFE_INTEGER)) {
+            throw new Error('SOL transfer amount exceeds safe integer lamport range.')
+          }
+          instructions.push(
+            SystemProgram.transfer({
+              fromPubkey: publicKey,
+              toPubkey: recipient,
+              lamports: Number(amount),
+            }),
           )
-        } catch (rpcError) {
-          console.error('[Veil checkout] payer token account RPC lookup failed', {
+        } else {
+          const mint = new PublicKey(payMint)
+          const payerAta = await associatedTokenAddress(publicKey, mint)
+          const destination = await associatedTokenAddress(recipient, mint)
+          console.info('[Veil checkout] payer token account lookup', {
             configuredNetwork: NETWORK,
             rpcEndpoint,
-            mint: invoice.mint,
-            payer: publicKey.toBase58(),
-            payerAta: payerAta.toBase58(),
-            errorType: rpcError instanceof Error ? rpcError.name : typeof rpcError,
-          })
-          throw new Error(
-            `Could not look up your USDC account on ${NETWORK_LABEL[NETWORK]}. The RPC request failed; check your connection and try again.`,
-          )
-        }
-        if (payerTokenAccounts.value.length === 0) {
-          console.warn('[Veil checkout] payer has no token account for configured USDC mint', {
-            configuredNetwork: NETWORK,
-            rpcEndpoint,
-            mint: invoice.mint,
+            mint: payMint,
             payer: publicKey.toBase58(),
             payerAta: payerAta.toBase58(),
           })
-          const fundingHint =
-            NETWORK === 'devnet'
-              ? 'Get test USDC from faucet.circle.com and select Solana Devnet.'
-              : 'Make sure the wallet holds native Circle USDC on Solana Mainnet.'
-          throw new Error(
-            `No USDC token account was found for your wallet on ${NETWORK_LABEL[NETWORK]}. It needs USDC for mint ${invoice.mint}. ${fundingHint}`,
+          let payerTokenAccounts: Awaited<ReturnType<typeof connection.getParsedTokenAccountsByOwner>>
+          paymentPhase = `Looking up your ${paySymbol} token accounts`
+          try {
+            payerTokenAccounts = await connection.getParsedTokenAccountsByOwner(
+              publicKey,
+              { mint },
+              'confirmed',
+            )
+          } catch (rpcError) {
+            console.error('[Veil checkout] payer token account RPC lookup failed', {
+              configuredNetwork: NETWORK,
+              rpcEndpoint,
+              mint: payMint,
+              payer: publicKey.toBase58(),
+              payerAta: payerAta.toBase58(),
+              errorType: rpcError instanceof Error ? rpcError.name : typeof rpcError,
+            })
+            throw new Error(
+              `Could not look up your ${paySymbol} account on ${NETWORK_LABEL[NETWORK]}. The RPC request failed; check your connection and try again.`,
+            )
+          }
+          if (payerTokenAccounts.value.length === 0) {
+            console.warn('[Veil checkout] payer has no token account for mint', {
+              configuredNetwork: NETWORK,
+              rpcEndpoint,
+              mint: payMint,
+              payer: publicKey.toBase58(),
+              payerAta: payerAta.toBase58(),
+            })
+            const fundingHint =
+              payMint === USDC_MINT && NETWORK === 'devnet'
+                ? 'Get test USDC from faucet.circle.com and select Solana Devnet.'
+                : `Make sure the wallet holds ${paySymbol} on ${NETWORK_LABEL[NETWORK]}.`
+            throw new Error(
+              `No ${paySymbol} token account was found for your wallet on ${NETWORK_LABEL[NETWORK]}. Mint: ${payMint}. ${fundingHint}`,
+            )
+          }
+
+          const payerAccounts = payerTokenAccounts.value.map((item) => ({
+            address: item.pubkey,
+            amount: BigInt(item.account.data.parsed.info.tokenAmount.amount as string),
+          }))
+          const sourceAccount =
+            payerAccounts.find(({ address, amount: balance }) => address.equals(payerAta) && balance >= amount) ??
+            payerAccounts.find(({ amount: balance }) => balance >= amount)
+          if (!sourceAccount) {
+            const available = payerAccounts.reduce((total, account) => total + account.amount, 0n)
+            throw new Error(
+              `Your wallet has ${formatAmount(available.toString(), payDecimals)} ${paySymbol} on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(amount.toString(), payDecimals)} ${paySymbol}.`,
+            )
+          }
+          const source = sourceAccount.address
+          paymentPhase = 'Checking the destination token account'
+          const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
+          if (!destinationAccount) {
+            instructions.push(
+              createAssociatedTokenAccountIdempotentInstruction(publicKey, recipient, mint, destination),
+            )
+          }
+          instructions.push(
+            transferCheckedInstruction(source, destination, mint, publicKey, amount, payDecimals),
           )
         }
 
-        const payerAccounts = payerTokenAccounts.value.map((item) => ({
-          address: item.pubkey,
-          amount: BigInt(item.account.data.parsed.info.tokenAmount.amount as string),
-        }))
-        console.info('[Veil checkout] payer token accounts found', {
-          mint: invoice.mint,
-          accounts: payerAccounts.map(({ address, amount }) => ({
-            address: address.toBase58(),
-            amount: amount.toString(),
-          })),
-        })
-        const sourceAccount =
-          payerAccounts.find(({ address, amount: balance }) => address.equals(payerAta) && balance >= amount) ??
-          payerAccounts.find(({ amount: balance }) => balance >= amount)
-        if (!sourceAccount) {
-          const available = payerAccounts.reduce((total, account) => total + account.amount, 0n)
-          console.warn('[Veil checkout] payer USDC balance is below the requested amount', {
-            configuredNetwork: NETWORK,
-            rpcEndpoint,
-            mint: invoice.mint,
-            payer: publicKey.toBase58(),
-            requestedAmount: amount.toString(),
-            availableAmount: available.toString(),
-          })
-          throw new Error(
-            `Your wallet has ${formatAmount(available.toString(), token.decimals)} USDC on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(invoice.amountAtomic, token.decimals)} USDC.`,
-          )
-        }
-        const source = sourceAccount.address
-        paymentPhase = 'Checking the merchant token account'
-        const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
-        if (!destinationAccount) {
-          instructions.push(
-            createAssociatedTokenAccountIdempotentInstruction(publicKey, recipient, mint, destination),
-          )
-        }
         instructions.push(
-          transferCheckedInstruction(source, destination, mint, publicKey, amount, token.decimals),
           new TransactionInstruction({
             programId: MEMO_PROGRAM_ID,
             keys: [],
@@ -434,7 +576,7 @@ export default function Checkout() {
           console.error('[Veil checkout] transaction simulation RPC failed', {
             configuredNetwork: NETWORK,
             rpcEndpoint,
-            mint: invoice.mint,
+            mint: payMint,
             payer: publicKey.toBase58(),
             error: simulationError,
           })
@@ -443,15 +585,6 @@ export default function Checkout() {
           )
         }
 
-        console.info('[Veil checkout] transaction simulation result', {
-          configuredNetwork: NETWORK,
-          rpcEndpoint,
-          mint: invoice.mint,
-          payer: publicKey.toBase58(),
-          err: simulation.value.err,
-          logs: simulation.value.logs,
-          unitsConsumed: simulation.value.unitsConsumed,
-        })
         if (simulation.value.err) {
           const logs = simulation.value.logs?.slice(-12).join('\n')
           throw new Error(
@@ -479,7 +612,10 @@ export default function Checkout() {
       paymentPhase = 'Confirming the payment with Veil'
       const confirmedInvoice = await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
         method: 'POST',
-        body: JSON.stringify({ signature: transactionToConfirm.signature }),
+        body: JSON.stringify({
+          signature: transactionToConfirm.signature,
+          ...(activeOrder ? { pajOfframpOrderId: activeOrder.id } : {}),
+        }),
       })
       setConfirmedSignature(transactionToConfirm.signature)
       setInvoice({ ...invoice, ...confirmedInvoice, status: 'funded', fundSignature: transactionToConfirm.signature })
@@ -557,10 +693,16 @@ export default function Checkout() {
     : `${Math.floor(remainingSeconds / 60).toString().padStart(2, '0')}:${(remainingSeconds % 60).toString().padStart(2, '0')}`
 
   const isOwner = user !== null && invoice.userId === user.id
+  const isFiatSettlement = invoice.settlementTarget === 'fiat'
+  const pajOrder = invoice.pajOfframp ?? null
+  const pajBadge = pajOrder ? getPajStatusPresentation(pajOrder.status) : null
   const paidByFiat = invoice.fiatCheckout?.status === 'completed'
+  const paidByPaj = pajOrder?.status === 'COMPLETED'
   const wholeNgnEligible = Boolean(
     invoice.amount_ngn && /^\d+$/.test(invoice.amount_ngn) && Number(invoice.amount_ngn) >= 1,
   )
+  const headerTokenAmount = pajOrder?.tokenAmount ?? displayAmount
+  const headerTokenSymbol = pajOrder?.tokenSymbol ?? token.symbol
 
   if (
     invoice.status === 'claimed' ||
@@ -573,7 +715,7 @@ export default function Checkout() {
         </div>
         <h1 className="mt-5 text-2xl font-semibold tracking-tight text-primary">Payment complete</h1>
         <p className="mt-2 text-sm text-foreground/65">
-          <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="inline-flex align-middle" /> paid for “{invoice.memo || 'Payment request'}”.
+          <Money amountNgn={invoice.amount_ngn} tokenAmount={headerTokenAmount} token={headerTokenSymbol} className="inline-flex align-middle" /> paid for “{invoice.memo || 'Payment request'}”.
         </p>
         {paidByFiat && invoice.fiatCheckout && (
           <div className="mt-5 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-900">
@@ -582,6 +724,44 @@ export default function Checkout() {
               Amount: <span className="font-mono font-medium">{formatNgn(invoice.fiatCheckout.amountPayable ?? invoice.fiatCheckout.amount)}</span>
             </p>
             <p className="mt-0.5 font-mono text-emerald-800/80">Ref: {invoice.fiatCheckout.reference}</p>
+          </div>
+        )}
+        {pajOrder && !paidByFiat && (
+          <div className="mt-5 space-y-2 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-950">
+            <div className="flex items-center justify-between gap-2">
+              <p className="font-semibold">
+                {paidByPaj ? 'Settled via Paj Cash NGN offramp' : 'Offramp processing via Paj Cash'}
+              </p>
+              {pajBadge && (
+                <span className={`inline-flex rounded-pill px-2 py-0.5 text-[11px] font-medium ${pajBadge.className}`}>
+                  {pajBadge.label}
+                </span>
+              )}
+            </div>
+            <p>
+              Sent:{' '}
+              <span className="font-mono font-medium">
+                {pajOrder.tokenAmount ?? displayAmount} {pajOrder.tokenSymbol}
+              </span>
+              {' → '}
+              <span className="font-mono font-medium">{formatNgn(pajOrder.fiatAmount)}</span>
+              {invoice.bankAccount ? ` (${invoice.bankAccount.bankName})` : ''}
+            </p>
+            <p className="truncate font-mono text-emerald-900/75">Deposit: {pajOrder.depositAddress}</p>
+            {pajError && (
+              <p role="alert" className="text-red-700">{pajError}</p>
+            )}
+            {!paidByPaj && (
+              <Button
+                size="sm"
+                variant="secondary"
+                loading={pajChecking}
+                leftIcon={<ArrowsClockwise size={14} />}
+                onClick={() => void handleReconcilePaj()}
+              >
+                Reconcile NGN settlement
+              </Button>
+            )}
           </div>
         )}
         {(confirmedSignature || invoice.fundSignature) && (
@@ -597,7 +777,9 @@ export default function Checkout() {
         <p className="mt-6 rounded-card bg-background px-4 py-3 text-xs text-foreground/55">
           {paidByFiat
             ? 'This NGN bank transfer has been verified by FossaPay. You can safely close this page.'
-            : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
+            : pajOrder
+              ? 'This on-chain transfer settles to the merchant’s Nigerian bank account via Paj Cash. You can safely close this page.'
+              : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
         </p>
       </CheckoutFrame>
     )
@@ -684,7 +866,7 @@ export default function Checkout() {
         {payMethod === 'bank' ? <Bank size={24} weight="fill" /> : <Wallet size={24} weight="fill" />}
       </div>
       <p className="mt-4 text-xs font-semibold uppercase tracking-[0.16em] text-foreground/50">Secure checkout</p>
-      <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="mx-auto mt-2" primaryClassName="text-4xl font-semibold tracking-tight text-primary" secondaryClassName="text-sm" />
+      <Money amountNgn={invoice.amount_ngn} tokenAmount={headerTokenAmount} token={headerTokenSymbol} className="mx-auto mt-2" primaryClassName="text-4xl font-semibold tracking-tight text-primary" secondaryClassName="text-sm" />
       <p className="mt-2 text-sm text-foreground/65">{invoice.memo || 'Payment request'}</p>
 
       {countdown && (
@@ -764,17 +946,161 @@ export default function Checkout() {
         </div>
       ) : (
         <>
-          <div className="my-5 rounded-card border border-primary/10 bg-background p-4 text-left">
-            <div className="flex items-start gap-2 text-sm text-foreground/70">
-              {invoice.receiveMode === 'private'
-                ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
-                : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
-              <p>
-                This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
-                {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
-              </p>
+          {isFiatSettlement ? (
+            <div className="my-5 space-y-4 text-left">
+              <div className="rounded-card border border-primary/10 bg-background p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-primary">Pay with any Solana token</p>
+                  <span className="rounded-pill bg-primary/10 px-2.5 py-0.5 text-[11px] font-medium text-primary">
+                    NGN settlement (Paj Cash)
+                  </span>
+                </div>
+                <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                  Pick a token to lock an offramp quote. The merchant receives{' '}
+                  <span className="font-mono font-medium text-foreground">{formatNgn(invoice.amount_ngn)}</span>
+                  {invoice.bankAccount ? ` in ${invoice.bankAccount.bankName}` : ' in NGN'}.
+                </p>
+
+                <div className="mt-3 flex flex-wrap gap-1.5" role="group" aria-label="Solana payment token">
+                  {PAJ_TOKENS.map((symbol) => (
+                    <button
+                      key={symbol}
+                      type="button"
+                      aria-pressed={pajTokenChoice === symbol}
+                      onClick={() => setPajTokenChoice(symbol)}
+                      className={`min-h-8 rounded-pill border px-3 text-xs font-semibold transition-colors ${
+                        pajTokenChoice === symbol
+                          ? 'border-primary bg-primary text-white'
+                          : 'border-primary/15 bg-white text-foreground/70 hover:border-primary/35 hover:text-primary'
+                      }`}
+                    >
+                      {symbol}
+                    </button>
+                  ))}
+                  <button
+                    type="button"
+                    aria-pressed={pajTokenChoice === 'CUSTOM'}
+                    onClick={() => setPajTokenChoice('CUSTOM')}
+                    className={`min-h-8 rounded-pill border px-3 text-xs font-semibold transition-colors ${
+                      pajTokenChoice === 'CUSTOM'
+                        ? 'border-primary bg-primary text-white'
+                        : 'border-primary/15 bg-white text-foreground/70 hover:border-primary/35 hover:text-primary'
+                    }`}
+                  >
+                    Custom mint
+                  </button>
+                </div>
+
+                {pajTokenChoice === 'CUSTOM' && (
+                  <div className="mt-3">
+                    <label htmlFor="custom-paj-mint" className="sr-only">Solana token mint address</label>
+                    <input
+                      id="custom-paj-mint"
+                      type="text"
+                      value={customMint}
+                      onChange={(event) => setCustomMint(event.target.value)}
+                      placeholder="Paste Solana SPL mint address"
+                      className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 font-mono text-xs outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                    />
+                  </div>
+                )}
+
+                <Button
+                  className="mt-3"
+                  size="sm"
+                  fullWidth
+                  variant={pajOrder ? 'secondary' : 'primary'}
+                  loading={pajLoading}
+                  disabled={expired}
+                  onClick={() => void handleCreatePajOrder()}
+                >
+                  {pajOrder
+                    ? `Update quote for ${pajTokenChoice === 'CUSTOM' ? 'custom token' : pajTokenChoice}`
+                    : `Get ${pajTokenChoice === 'CUSTOM' ? 'token' : pajTokenChoice} payment quote`}
+                </Button>
+              </div>
+
+              {pajError && (
+                <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">
+                  {pajError}
+                </p>
+              )}
+
+              {pajOrder && pajBadge && (
+                <div className="space-y-3 rounded-card border border-primary/15 bg-white p-4">
+                  <div className="flex items-center justify-between gap-2">
+                    <div>
+                      <p className="text-xs text-foreground/55">Send exact amount</p>
+                      <p className="font-mono text-lg font-semibold tabular-nums text-primary">
+                        {pajOrder.tokenAmount ?? '—'} {pajOrder.tokenSymbol}
+                      </p>
+                    </div>
+                    <span className={`inline-flex rounded-pill px-2.5 py-0.5 text-xs font-medium ${pajBadge.className}`}>
+                      {pajBadge.label}
+                    </span>
+                  </div>
+
+                  <div className="flex flex-wrap items-center justify-between gap-2 text-xs text-foreground/60">
+                    <span>NGN value: <span className="font-mono font-medium text-foreground">{formatNgn(pajOrder.fiatAmount)}</span></span>
+                    {pajOrder.rate && (
+                      <span className="font-mono tabular-nums">Rate ₦{pajOrder.rate}/USD</span>
+                    )}
+                    {pajOrder.feeUsdc && (
+                      <span className="font-mono tabular-nums">Fee {pajOrder.feeUsdc} USDC</span>
+                    )}
+                  </div>
+
+                  <div className="flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-background px-3 py-2">
+                    <div className="min-w-0">
+                      <p className="text-[11px] uppercase tracking-wider text-foreground/50">
+                        Paj Cash Solana Mainnet deposit address
+                      </p>
+                      <p className="truncate font-mono text-xs text-primary">{pajOrder.depositAddress}</p>
+                    </div>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => void copyPajAddress(pajOrder.depositAddress)}
+                      leftIcon={copiedPajAddress ? <CheckCircle size={14} /> : <Copy size={14} />}
+                    >
+                      {copiedPajAddress ? 'Copied' : 'Copy'}
+                    </Button>
+                  </div>
+
+                  {NETWORK !== 'mainnet-beta' && (
+                    <p role="status" className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                      Paj Cash settles on Solana Mainnet, while this app is configured for {NETWORK_LABEL[NETWORK]}.
+                      Send {pajOrder.tokenAmount ?? ''} {pajOrder.tokenSymbol} on Mainnet to the deposit address above,
+                      then click Reconcile status.
+                    </p>
+                  )}
+
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    fullWidth
+                    loading={pajChecking}
+                    leftIcon={<ArrowsClockwise size={14} />}
+                    onClick={() => void handleReconcilePaj()}
+                  >
+                    Reconcile status
+                  </Button>
+                </div>
+              )}
             </div>
-          </div>
+          ) : (
+            <div className="my-5 rounded-card border border-primary/10 bg-background p-4 text-left">
+              <div className="flex items-start gap-2 text-sm text-foreground/70">
+                {invoice.receiveMode === 'private'
+                  ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
+                  : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
+                <p>
+                  This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
+                  {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
+                </p>
+              </div>
+            </div>
+          )}
 
           {paymentError && (
             <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
@@ -808,8 +1134,21 @@ export default function Checkout() {
                 Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
               </p>
               <p className="text-xs text-foreground/45">This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.</p>
-              <Button size="lg" fullWidth loading={paying} onClick={() => void handlePay()} disabled={expired && !pendingTransaction}>
-                {pendingTransaction ? 'Retry payment confirmation' : 'Pay now'}
+              <Button
+                size="lg"
+                fullWidth
+                loading={paying}
+                onClick={() => void handlePay()}
+                disabled={
+                  (expired && !pendingTransaction) ||
+                  (isFiatSettlement && (!pajOrder || NETWORK !== 'mainnet-beta'))
+                }
+              >
+                {pendingTransaction
+                  ? 'Retry payment confirmation'
+                  : isFiatSettlement && pajOrder?.tokenAmount
+                    ? `Pay ${pajOrder.tokenAmount} ${pajOrder.tokenSymbol} now`
+                    : 'Pay now'}
               </Button>
             </div>
           ) : installedWallets.length > 0 ? (

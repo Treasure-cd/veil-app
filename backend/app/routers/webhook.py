@@ -10,9 +10,10 @@ from core.session import get_session
 from app.models.merchant import OnboardingStage, Merchant
 from app.models.user import User
 from app.models.payment import PaymentIntent
-from app.routers.payments import mark_intent_funded_from_fiat
+from app.routers.payments import mark_intent_funded_from_fiat, mark_intent_funded_from_paj
 from app.services.message_service import send_msg
 from app.services.merchant_service import create_merchant
+from app.services.pajcash import PajCashService, verify_paj_webhook
 from app.services.payment import FossaPayService, verify_fossapay_webhook
 from core.config import settings
 
@@ -280,3 +281,29 @@ async def fossapay_webhook(
         await mark_intent_funded_from_fiat(db, payment)
 
     return {"status": "ok", "accepted": accepted}
+
+
+@router.post("/pajcash")
+async def pajcash_webhook(
+    req: Request,
+    db: AsyncSession = Depends(get_session),
+):
+    """Receive and verify asynchronous Paj Cash offramp status updates."""
+    raw_body = await req.body()
+    if not verify_paj_webhook(raw_body, req.headers):
+        raise HTTPException(status_code=401, detail="Invalid Paj Cash webhook signature")
+
+    try:
+        import json
+        payload = json.loads(raw_body.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=400, detail="Invalid webhook envelope")
+
+    order = await PajCashService().process_ramp_webhook(db, payload)
+    if order is not None:
+        await mark_intent_funded_from_paj(db, order)
+
+    return {"status": "ok", "matched": order is not None}
