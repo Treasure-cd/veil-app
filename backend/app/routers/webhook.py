@@ -31,7 +31,7 @@ def is_valid_solana_address(address: str) -> bool:
 
 def parse_invoice_message(message: str) -> dict | None:
     text = message.strip()
-    
+
     # Pattern 1: Invoice [amount] [currency] [for] [description]
     # e.g. "Invoice 50 USDC for consulting"
     pattern1 = r"invoice\s+([\d,.]+)\s*(usdc|sol|usdg)(?:\s+for)?\s+(.+)"
@@ -56,18 +56,18 @@ def parse_invoice_message(message: str) -> dict | None:
 
 @router.post("/whatsapp")
 async def whatsapp_webhook(
-    req: Request, 
+    req: Request,
     db: AsyncSession = Depends(get_session)
 ):
     """webhook to receive whatsapp's event"""
-    
+
     logger.info("listening for events....")
     resp = await req.json()
 
     if resp.get("event") != "messages.upsert":
         logger.info(f'ignoring event: {resp.get("event")}, no messages appeared on whatsapp...')
         return {"status": "ignored"}
-    
+
     data = resp["data"]["messages"]
     from_me = data["key"]["fromMe"]
     phone_number = data["key"]["cleanedSenderPn"]
@@ -76,10 +76,10 @@ async def whatsapp_webhook(
     if from_me:
         logger.info('ignoring message sent by the merchant...')
         return {"status": "ignored"}
-    
+
     # Find or create merchant
     merchant, created = await create_merchant(
-        phone_number, 
+        phone_number,
         db
     )
 
@@ -135,7 +135,7 @@ async def whatsapp_webhook(
         )
         await send_msg(phone_number, business_msg)
         return {"status": "ok"}
-    
+
     if merchant.onboarding_stage == OnboardingStage.BUSINESS_TYPE:
         # Save business type and ask for wallet address
         merchant.business_type = message
@@ -153,7 +153,7 @@ async def whatsapp_webhook(
         )
         await send_msg(phone_number, wallet_msg)
         return {"status": "ok"}
-        
+
     if merchant.onboarding_stage == "wallet_address":
         address = message.strip()
         if not is_valid_solana_address(address):

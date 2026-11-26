@@ -116,6 +116,8 @@ Features needed to be alive and well, and tested.
 - NFC
 - General UX updates, criticism and fixations
 - Update README
+- Connecting wallets is no longer compulsory
+- Deployed links (as in going directly to payments) doesn't work
 
 
 Cross system payment checks
@@ -128,3 +130,4 @@ Cross system payment checks
 
 
 - Popup, or like, a more exciting way of saying payroll has been confirmed
+- QR code on desktop to try the bot

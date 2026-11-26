@@ -12,9 +12,9 @@ import type { WalletContextState } from '@solana/wallet-adapter-react'
 import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js'
 
 
-import { NETWORK, SOLANA_RPC_URL } from './network'
+import { NETWORK, SOLANA_GENESIS_HASH, SOLANA_RPC_URL } from './network'
 
-const DEVNET_RPC_URL = SOLANA_RPC_URL || clusterApiUrl(NETWORK)
+const DEVNET_RPC_URL = SOLANA_RPC_URL || clusterApiUrl('devnet')
 const DEVNET_WS_URL =
   process.env.SOLANA_WS_URL || DEVNET_RPC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
 
@@ -131,6 +131,10 @@ async function checkDevnetBalances(
   let nativeLamports: bigint
   let wsolAtomic = 0n
   try {
+    const genesisHash = await connection.getGenesisHash()
+    if (genesisHash !== SOLANA_GENESIS_HASH.devnet) {
+      throw new Error('Payroll requires a Devnet RPC. The configured RPC is connected to a different Solana cluster.')
+    }
     const balance = await connection.getBalance(owner, 'confirmed')
     nativeLamports = BigInt(balance)
     const ataInfo = await connection.getAccountInfo(wsolAta, 'confirmed')
@@ -140,6 +144,9 @@ async function checkDevnetBalances(
     }
   } catch (error) {
     console.error('[Umbra] Devnet balance preflight failed', error)
+    if (error instanceof Error && error.message.startsWith('Payroll requires a Devnet RPC.')) {
+      throw error
+    }
     throw new Error('Could not check your devnet SOL and wSOL balances. Check the Solana RPC and retry.')
   }
 
@@ -208,6 +215,10 @@ export async function fundPayrollVault({
   totalAmountAtomic,
   onStatus,
 }: FundVaultParams): Promise<string> {
+  if (NETWORK !== 'devnet') {
+    throw new Error('Payroll vault funding is only supported on Solana Devnet; Umbra mainnet support is not configured.')
+  }
+
   const mint = UMBRA_DEVNET_MINTS[token]
   if (!mint) {
     throw new Error('Umbra devnet currently supports SOL (wSOL) only. Select SOL to test on devnet.')

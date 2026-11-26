@@ -1,6 +1,11 @@
 export type Network = 'mainnet-beta' | 'devnet'
 
-const configuredNetwork = process.env.SOLANA_NETWORK?.toLowerCase()
+const configuredNetwork = process.env.SOLANA_NETWORK?.trim().toLowerCase()
+
+if (configuredNetwork && !['mainnet-beta', 'mainnet', 'devnet'].includes(configuredNetwork)) {
+  throw new Error('SOLANA_NETWORK must be set to mainnet-beta or devnet.')
+}
+
 export const NETWORK: Network = configuredNetwork === 'mainnet-beta' || configuredNetwork === 'mainnet'
   ? 'mainnet-beta'
   : 'devnet'

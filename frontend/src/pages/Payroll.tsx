@@ -11,6 +11,7 @@ import { Button } from '../components/ui/Button'
 import { api } from '../services/api'
 import { fundPayrollVault } from '../lib/umbra'
 import { Money } from '../components/ui/Money'
+import { NETWORK } from '../lib/network'
 
 interface Rates { sol: string; usdc: string; asOf: string }
 
@@ -225,6 +226,10 @@ export default function Payroll() {
     setError(null)
     setStatusMessage(null)
     setSuccessGroupId(null)
+    if (NETWORK !== 'devnet') {
+      setError('Payroll vault funding is only supported on Solana Devnet; Umbra mainnet support is not configured.')
+      return
+    }
     if (!publicKey) { setError('Please connect your wallet to fund payroll.'); return }
     if (!payrollDate || !payrollTime) { setError('Please set a release date and time.'); return }
 
@@ -341,6 +346,12 @@ export default function Payroll() {
           <h1 className="text-3xl font-bold tracking-tight text-primary">Run Payroll</h1>
           <p className="text-foreground/70">Schedule and fund multiple payments in a single transaction.</p>
         </header>
+
+        {NETWORK !== 'devnet' && (
+          <p role="status" className="rounded-card border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+            Payroll vault funding is unavailable on Mainnet. The current Umbra integration is configured for Devnet only.
+          </p>
+        )}
 
         {error && (
           <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700">
@@ -544,11 +555,11 @@ export default function Payroll() {
                 <>
                   {statusMessage && <p className="mt-4 text-center text-sm text-foreground/70" role="status">{statusMessage}</p>}
                   {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700" role="status">Payroll group {successGroupId} funded and locked.</p>}
-                  {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting} onClick={handleRetryLock}>Retry locking payroll group</Button>}
+                  {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting || NETWORK !== 'devnet'} onClick={handleRetryLock}>Retry locking payroll group</Button>}
                   <Button
                     size="lg"
                     fullWidth
-                    disabled={isSubmitting}
+                    disabled={isSubmitting || NETWORK !== 'devnet'}
                     onClick={handleConfirm}
                     className="mt-6 h-14 whitespace-nowrap text-base shadow-lg shadow-primary/20"
                     leftIcon={<LockKey size={20} weight="bold" />}
