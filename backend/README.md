@@ -44,11 +44,17 @@ In Twilio's WhatsApp Sandbox settings, set **When a message comes in** to:
 https://veil-3998494c.fastapicloud.dev/v1/whatsapp/webhook
 ```
 
-Select **HTTP POST**. Set `TWILIO_AUTH_TOKEN` in FastAPI Cloud and set
-`WEBHOOK_PUBLIC_URL` to that exact URL, including `/v1/whatsapp/webhook`; Twilio
-signatures are checked against it. The bot returns TwiML with the checkout link.
-Ensure `FRONTEND_URL` points to the deployed Veil frontend so that link opens
-the correct checkout page.
+Select **HTTP POST**. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` in
+FastAPI Cloud, and set `WEBHOOK_PUBLIC_URL` to that exact URL, including
+`/v1/whatsapp/webhook`; Twilio signatures are checked against it. The bot sends
+replies through Twilio's REST API using the inbound webhook's `To` number as
+the sender, and returns an empty TwiML response. `TWILIO_WHATSAPP_FROM` is used
+for generating Sandbox join links, not for webhook replies. If Twilio requires
+a pre-approved WhatsApp template (for example, outside the 24-hour customer
+service window), set `TWILIO_CONTENT_SID` to its `HX...` Content SID; the
+template must contain a `{{1}}` variable for the reply text. Ensure
+`FRONTEND_URL` points to the deployed Veil frontend so checkout links open the
+correct page.
 
 Vendors can use the default public USDC + bank-transfer checkout, or add
 `private` and/or `crypto only` to a request, for example

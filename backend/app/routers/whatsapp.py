@@ -1,4 +1,5 @@
-import logging
+import asyncio
+import json
 import re
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
@@ -6,10 +7,12 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
+from loguru import logger
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from twilio.request_validator import RequestValidator
+from twilio.rest import Client
 from twilio.twiml.messaging_response import MessagingResponse
 
 from app.models.payment import PaymentIntent
@@ -23,7 +26,6 @@ from core.config import settings
 from core.session import get_session
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
-logger = logging.getLogger(__name__)
 
 MENU = (
     "I can help with payments. Try: `link 5000 for lunch`, `link 5000 private`, "
@@ -32,11 +34,29 @@ MENU = (
 APOLOGY = "Sorry, Veil couldn't process that just now. Please try again shortly."
 
 
-def _twiml(message: str | None = None, status_code: int = 200) -> Response:
-    response = MessagingResponse()
-    if message:
-        response.message(message)
-    return Response(content=str(response), status_code=status_code, media_type="application/xml")
+def _twiml(status_code: int = 200) -> Response:
+    xml = str(MessagingResponse())
+    logger.info("TwiML reply ({}): {}", status_code, xml)
+    return Response(content=xml, status_code=status_code, media_type="application/xml")
+
+
+def _send_whatsapp(to_number: str, from_number: str, body: str) -> None:
+    if not settings.TWILIO_ACCOUNT_SID or not settings.TWILIO_AUTH_TOKEN:
+        raise RuntimeError("Twilio REST API credentials are not configured")
+
+    client = Client(settings.TWILIO_ACCOUNT_SID, settings.TWILIO_AUTH_TOKEN)
+    to_wa = to_number if to_number.startswith("whatsapp:") else f"whatsapp:{to_number}"
+    from_wa = from_number if from_number.startswith("whatsapp:") else f"whatsapp:{from_number}"
+    if settings.TWILIO_CONTENT_SID:
+        message = client.messages.create(
+            from_=from_wa,
+            to=to_wa,
+            content_sid=settings.TWILIO_CONTENT_SID,
+            content_variables=json.dumps({"1": body}),
+        )
+    else:
+        message = client.messages.create(from_=from_wa, to=to_wa, body=body)
+    logger.info("Sent WhatsApp reply {} to {}", message.sid, to_wa)
 
 
 def _format_ngn(value: Decimal | str | None) -> str:
@@ -89,40 +109,75 @@ async def _recent_payments(db: AsyncSession, merchant_id: UUID) -> str:
 
 @router.post("/webhook")
 async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_session)):
-    """Receive Twilio Sandbox messages and return a single TwiML reply."""
+    """Receive Twilio messages, reply through the REST API, and return empty TwiML."""
+    from_value = ""
+    to_value = ""
+    reply_attempted = False
+    sender_valid = False
+
     try:
-        if not settings.TWILIO_AUTH_TOKEN or not settings.WEBHOOK_PUBLIC_URL:
+        logger.info("Received Twilio WhatsApp webhook")
+        if (
+            not settings.TWILIO_AUTH_TOKEN
+            or not settings.WEBHOOK_PUBLIC_URL
+            or not settings.TWILIO_ACCOUNT_SID
+        ):
             logger.error("Twilio webhook configuration is incomplete")
-            return _twiml(APOLOGY)
+            return _twiml()
 
         form = await request.form()
         signature = request.headers.get("X-Twilio-Signature", "")
         validator = RequestValidator(settings.TWILIO_AUTH_TOKEN)
         if not validator.validate(settings.WEBHOOK_PUBLIC_URL, dict(form), signature):
+            logger.warning("Twilio WhatsApp signature validation failed")
             return _twiml(status_code=403)
 
         from_value = str(form.get("From", ""))
+        to_value = str(form.get("To", ""))
+        logger.info("Inbound WhatsApp addresses: From={} To={}", from_value, to_value)
+
+        if not to_value:
+            logger.warning("Twilio WhatsApp webhook did not include a To number")
+            return _twiml()
+
+        async def reply(text: str) -> Response:
+            nonlocal reply_attempted
+            reply_attempted = True
+            await asyncio.to_thread(
+                _send_whatsapp,
+                to_number=from_value,
+                from_number=to_value,
+                body=text,
+            )
+            return _twiml()
+
         body = str(form.get("Body", "")).strip()
         message_sid = str(form.get("MessageSid", "")).strip()
         if not message_sid:
-            return _twiml(APOLOGY)
+            logger.warning("Twilio WhatsApp webhook did not include a message SID")
+            return _twiml()
 
         try:
             phone = normalize_phone_number(from_value)
         except ValueError:
-            return _twiml(APOLOGY)
+            logger.warning("Twilio WhatsApp webhook included an invalid sender number")
+            return _twiml()
+        sender_valid = True
 
         existing = await db.get(WhatsAppMessage, message_sid)
         if existing:
             # A retry gets an empty TwiML response so it cannot trigger a second outbound message.
+            logger.info("Ignoring duplicate Twilio WhatsApp message {}", message_sid)
             return _twiml()
         db.add(WhatsAppMessage(message_sid=message_sid))
         try:
             await db.commit()
         except IntegrityError:
             await db.rollback()
+            logger.info("Ignoring duplicate Twilio WhatsApp message {}", message_sid)
             return _twiml()
 
+        logger.info("Processing Twilio WhatsApp message {}", message_sid)
         parsed = parse_message(body)
 
         if parsed["intent"] == "link_code":
@@ -132,25 +187,25 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
                 phone_e164=phone,
             )
             if result == "linked":
-                return _twiml(f"Your WhatsApp is now linked to {display_name}.")
+                return await reply(f"Your WhatsApp is now linked to {display_name}.")
             if result == "expired":
-                return _twiml("That link code has expired. Generate a new code in Veil Settings → WhatsApp.")
+                return await reply("That link code has expired. Generate a new code in Veil Settings → WhatsApp.")
             if result == "used":
-                return _twiml("That link code has already been used. Generate a new code in Veil Settings → WhatsApp.")
-            return _twiml("That link code is not valid. Check the code and try again.")
+                return await reply("That link code has already been used. Generate a new code in Veil Settings → WhatsApp.")
+            return await reply("That link code is not valid. Check the code and try again.")
 
         linked = (await db.execute(
             select(WhatsAppLink).where(WhatsAppLink.phone_e164 == phone)
         )).scalars().first()
         if not linked:
-            return _twiml(
+            return await reply(
                 "Hi, I'm Veil. Link your account in Settings → WhatsApp to get started. "
                 f"{settings.FRONTEND_URL.rstrip('/')}/settings"
             )
 
         user = await db.get(User, linked.merchant_id)
         if not user:
-            return _twiml(APOLOGY)
+            return await reply(APOLOGY)
 
         session = await db.get(WhatsAppSession, phone)
         now = datetime.now(timezone.utc)
@@ -160,11 +215,11 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
             session = None
 
         if parsed["intent"] == "menu":
-            return _twiml(MENU)
+            return await reply(MENU)
         if parsed["intent"] == "recent_payments":
-            return _twiml(await _recent_payments(db, user.id))
+            return await reply(await _recent_payments(db, user.id))
         if parsed["intent"] == "fallback" and (not session or session.state != "awaiting_amount"):
-            return _twiml(f"I'm here to help with payments. {MENU}")
+            return await reply(f"I'm here to help with payments. {MENU}")
 
         if session and session.state == "awaiting_amount":
             if parsed["intent"] != "create_link":
@@ -179,7 +234,7 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
                 session.updated_at = now
                 db.add(session)
                 await db.commit()
-                return _twiml("Please send an amount in naira, for example 5,000 or 5k.")
+                return await reply("Please send an amount in naira, for example 5,000 or 5k.")
             session = WhatsAppSession(
                 phone_e164=phone,
                 state="awaiting_amount",
@@ -188,12 +243,12 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
             )
             db.add(session)
             await db.commit()
-            return _twiml("How much in naira?")
+            return await reply("How much in naira?")
 
         if parsed["amount_error"] == "too_low":
-            return _twiml("The minimum request is ₦100. Please send an amount of ₦100 or more.")
+            return await reply("The minimum request is ₦100. Please send an amount of ₦100 or more.")
         if parsed["amount_error"] == "too_high":
-            return _twiml("The maximum request is ₦10,000,000. Please send a lower amount.")
+            return await reply("The maximum request is ₦10,000,000. Please send a lower amount.")
 
         receive_mode = parsed["receive_mode"] or (
             "private" if settings.WHATSAPP_PRIVATE_PAYMENTS else "public"
@@ -227,17 +282,27 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
             payment_options = "USDC or bank transfer"
         else:
             payment_options = "USDC only"
-        reply = (
+        reply_text = (
             f"Checkout link: {checkout_url}\n"
             f"{_format_ngn(parsed['amount_ngn'])} (≈ {token_amount.normalize():f} {token})\n"
             f"Payment options: {payment_options}.\n"
             "Valid for 30 minutes."
         )
-        return _twiml(reply)
+        return await reply(reply_text)
     except Exception:
         logger.exception("WhatsApp webhook processing failed")
         try:
             await db.rollback()
         except Exception:
             logger.exception("Could not rollback failed WhatsApp webhook transaction")
-        return _twiml(APOLOGY)
+        if sender_valid and not reply_attempted:
+            try:
+                await asyncio.to_thread(
+                    _send_whatsapp,
+                    to_number=from_value,
+                    from_number=to_value,
+                    body=APOLOGY,
+                )
+            except Exception:
+                logger.exception("Could not send WhatsApp failure reply")
+        return _twiml()

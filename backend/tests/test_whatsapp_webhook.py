@@ -21,6 +21,7 @@ import app.models  # noqa: F401
 from app.models.payment import PaymentIntent
 from app.models.user import User
 from app.models.whatsapp import WhatsAppLink
+from app.routers.whatsapp import _send_whatsapp
 from core.config import settings
 from core.session import get_session
 from main import app
@@ -56,6 +57,59 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides.clear()
         await self.engine.dispose()
 
+    async def test_invalid_twilio_signature_is_logged(self) -> None:
+        with (
+            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
+            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
+            patch.object(
+                settings,
+                "WEBHOOK_PUBLIC_URL",
+                "https://api.example.test/v1/whatsapp/webhook",
+            ),
+            patch("app.routers.whatsapp.logger") as logger,
+        ):
+            response = self.client.post(
+                "/v1/whatsapp/webhook",
+                data={"From": "whatsapp:+2348012345678", "Body": "help"},
+                headers={"X-Twilio-Signature": "invalid"},
+            )
+
+        self.assertEqual(response.status_code, 403)
+        logger.warning.assert_called_once_with("Twilio WhatsApp signature validation failed")
+        self.assertNotIn("<Message>", response.text)
+
+    async def test_whatsapp_sender_uses_twilio_rest_api(self) -> None:
+        with (
+            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
+            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
+            patch.object(settings, "TWILIO_CONTENT_SID", None),
+            patch("app.routers.whatsapp.Client") as twilio_client,
+        ):
+            _send_whatsapp("+2348012345678", "whatsapp:+17372212163", "Hello")
+
+        twilio_client.assert_called_once_with("AC-test-account", "test-twilio-token")
+        twilio_client.return_value.messages.create.assert_called_once_with(
+            from_="whatsapp:+17372212163",
+            to="whatsapp:+2348012345678",
+            body="Hello",
+        )
+
+    async def test_whatsapp_sender_can_use_content_template(self) -> None:
+        with (
+            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
+            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
+            patch.object(settings, "TWILIO_CONTENT_SID", "HX-test-template"),
+            patch("app.routers.whatsapp.Client") as twilio_client,
+        ):
+            _send_whatsapp("+2348012345678", "whatsapp:+17372212163", "Hello")
+
+        twilio_client.return_value.messages.create.assert_called_once_with(
+            from_="whatsapp:+17372212163",
+            to="whatsapp:+2348012345678",
+            content_sid="HX-test-template",
+            content_variables='{"1": "Hello"}',
+        )
+
     async def test_twilio_form_message_returns_configured_checkout_link(self) -> None:
         auth_token = "test-twilio-token"
         webhook_url = "https://api.example.test/v1/whatsapp/webhook"
@@ -75,16 +129,20 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         )
         form = {
             "From": "whatsapp:+2348012345678",
+            "To": "whatsapp:+17372212163",
             "Body": "5000 for lunch",
             "MessageSid": "SM-test-whatsapp-checkout",
         }
         signature = RequestValidator(auth_token).compute_signature(webhook_url, form)
 
         with (
+            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
             patch.object(settings, "TWILIO_AUTH_TOKEN", auth_token),
+            patch.object(settings, "TWILIO_CONTENT_SID", None),
             patch.object(settings, "WEBHOOK_PUBLIC_URL", webhook_url),
             patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
             patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
+            patch("app.routers.whatsapp._send_whatsapp") as send_reply,
             patch(
                 "app.routers.whatsapp.create_payment_intent",
                 new=AsyncMock(return_value=intent),
@@ -98,8 +156,15 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.headers["content-type"], "application/xml")
-        self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}", response.text)
-        self.assertIn("Checkout link:", response.text)
+        self.assertNotIn("<Message>", response.text)
+        send_reply.assert_called_once()
+        self.assertEqual(send_reply.call_args.kwargs["to_number"], form["From"])
+        self.assertEqual(send_reply.call_args.kwargs["from_number"], form["To"])
+        self.assertIn(
+            f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}",
+            send_reply.call_args.kwargs["body"],
+        )
+        self.assertIn("Checkout link:", send_reply.call_args.kwargs["body"])
         create_intent.assert_awaited_once()
         self.assertEqual(create_intent.await_args.kwargs["token"], "USDC")
         self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "public")
@@ -124,16 +189,20 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         )
         form = {
             "From": "whatsapp:+2348012345678",
+            "To": "whatsapp:+17372212163",
             "Body": "5000 for lunch private crypto only",
             "MessageSid": "SM-test-whatsapp-private-crypto-only",
         }
         signature = RequestValidator(auth_token).compute_signature(webhook_url, form)
 
         with (
+            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
             patch.object(settings, "TWILIO_AUTH_TOKEN", auth_token),
+            patch.object(settings, "TWILIO_CONTENT_SID", None),
             patch.object(settings, "WEBHOOK_PUBLIC_URL", webhook_url),
             patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
             patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
+            patch("app.routers.whatsapp._send_whatsapp") as send_reply,
             patch(
                 "app.routers.whatsapp.create_payment_intent",
                 new=AsyncMock(return_value=intent),
@@ -146,8 +215,14 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
             )
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("private USDC only", response.text)
-        self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}", response.text)
+        self.assertNotIn("<Message>", response.text)
+        send_reply.assert_called_once()
+        self.assertEqual(send_reply.call_args.kwargs["from_number"], form["To"])
+        self.assertIn("private USDC only", send_reply.call_args.kwargs["body"])
+        self.assertIn(
+            f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}",
+            send_reply.call_args.kwargs["body"],
+        )
         create_intent.assert_awaited_once()
         self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "private")
         self.assertFalse(create_intent.await_args.kwargs["allow_fiat_checkout"])
