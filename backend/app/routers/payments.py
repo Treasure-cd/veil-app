@@ -722,7 +722,7 @@ async def verify_transfer(
                     sig,
                     encoding="jsonParsed",
                     commitment=Confirmed,
-                    max_supported_transaction_version=0,
+                    max_supported_transaction_version=1,
                 )
                 tx = response.value
                 if tx is not None:
@@ -843,7 +843,7 @@ async def verify_umbra_deposit(
                     sig,
                     encoding="jsonParsed",
                     commitment=Confirmed,
-                    max_supported_transaction_version=0,
+                    max_supported_transaction_version=1,
                 )
                 tx = response.value
                 if tx is not None:
