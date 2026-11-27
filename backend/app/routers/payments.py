@@ -57,6 +57,7 @@ class CreatePaymentIntentRequest(BaseModel):
     amount_ngn: Decimal = Field(validation_alias=AliasChoices("amount_ngn", "amountNgn"))
     recipientAddress: str
     receiveMode: Literal["private", "public"] = "private"
+    allowFiatCheckout: bool = True
     settlementTarget: Literal["crypto", "fiat"] = "crypto"
     bankAccountId: Optional[UUID] = None
     memo: Optional[str] = None
@@ -417,6 +418,7 @@ def format_intent(
         "expires_at": intent.expires_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if intent.expires_at else None,
         "recipientAddress": intent.recipient_address,
         "receiveMode": intent.receive_mode,
+        "allowFiatCheckout": intent.allow_fiat_checkout,
         "settlementTarget": intent.settlement_target,
         "memo": intent.memo,
         "status": intent.status,
@@ -698,6 +700,11 @@ async def create_intent(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
+    if req.includeFiatCheckout and not req.allowFiatCheckout:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create a bank-transfer checkout when FossaPay is disabled.",
+        )
     if req.includeFiatCheckout:
         dec = req.amount_ngn
         if not dec.is_finite() or dec != dec.to_integral_value() or dec < 1:
@@ -748,6 +755,7 @@ async def create_intent(
         memo=req.memo,
         source="web",
         receive_mode=receive_mode,
+        allow_fiat_checkout=req.allowFiatCheckout,
         settlement_target=req.settlementTarget,
         bank_account_id=bank_account.id if bank_account else None,
     )
@@ -953,6 +961,20 @@ async def create_intent_fiat_checkout(
             is_owner = current_user is not None and intent.user_id == current_user.id
             return format_fiat_payment(existing, is_owner=is_owner)
         raise HTTPException(status_code=409, detail="Payment has already been funded or closed.")
+
+    existing = await _latest_checkout_for_intent(db, intent.id)
+    if existing and existing.status in (
+        FiatPaymentStatus.PENDING.value,
+        FiatPaymentStatus.PROCESSING.value,
+        FiatPaymentStatus.COMPLETED.value,
+    ):
+        is_owner = current_user is not None and intent.user_id == current_user.id
+        return format_fiat_payment(existing, is_owner=is_owner)
+    if not intent.allow_fiat_checkout or intent.receive_mode == "private":
+        raise HTTPException(
+            status_code=403,
+            detail="Bank transfer is not enabled for this payment request.",
+        )
 
     fiat_checkout = await _ensure_intent_fiat_checkout(db, intent)
     is_owner = current_user is not None and intent.user_id == current_user.id

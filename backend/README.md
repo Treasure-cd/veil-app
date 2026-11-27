@@ -33,6 +33,26 @@ Configure these variables in the FastAPI Cloud app settings before deployment:
 - `SOLANA_NETWORK`, `SOLANA_RPC_URL`, `USDC_MINT`, and `SOL_MINT`: configure the API's Solana cluster and token mints. Defaults are Mainnet (`mainnet-beta`, `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); setting `SOLANA_NETWORK=devnet` automatically selects the Devnet RPC and Devnet USDC mint unless explicitly overridden.
 - `RATE_NGN_PER_SOL` and `RATE_NGN_PER_USDC`: optional fallback values if CoinGecko is unavailable.
 - `WASENDER_API_KEY`: optional, required only for the WhatsApp integration.
+- `WHATSAPP_PAYMENT_METHODS`: `usdc,fossapay` (default) or `usdc`. FossaPay bank transfer requires a whole-naira amount.
+- `WHATSAPP_PRIVATE_PAYMENTS`: defaults to `false`; set to `true` for private USDC checkout links. Private links cannot also offer FossaPay.
+
+### Twilio WhatsApp webhook
+
+In Twilio's WhatsApp Sandbox settings, set **When a message comes in** to:
+
+```text
+https://veil-3998494c.fastapicloud.dev/v1/whatsapp/webhook
+```
+
+Select **HTTP POST**. Set `TWILIO_AUTH_TOKEN` in FastAPI Cloud and set
+`WEBHOOK_PUBLIC_URL` to that exact URL, including `/v1/whatsapp/webhook`; Twilio
+signatures are checked against it. The bot returns TwiML with the checkout link.
+Ensure `FRONTEND_URL` points to the deployed Veil frontend so that link opens
+the correct checkout page.
+
+Vendors can use the default public USDC + bank-transfer checkout, or add
+`private` and/or `crypto only` to a request, for example
+`link 5000 for lunch private crypto only`. Private payments are USDC-only.
 
 Set database credentials and `JWT_SECRET` as encrypted secrets in FastAPI Cloud. Do not deploy the local `.env` file.
 

@@ -22,6 +22,7 @@ async def create_payment_intent(
     memo: str | None = None,
     source: str = "web",
     receive_mode: Literal["private", "public"] = "private",
+    allow_fiat_checkout: bool = True,
     settlement_target: Literal["crypto", "fiat"] = "crypto",
     bank_account_id: UUID | None = None,
 ) -> PaymentIntent:
@@ -51,6 +52,7 @@ async def create_payment_intent(
         expires_at=now + timedelta(minutes=30),
         recipient_address=recipient_address,
         receive_mode=receive_mode,
+        allow_fiat_checkout=allow_fiat_checkout,
         settlement_target=settlement_target,
         bank_account_id=bank_account_id,
         memo=memo,

@@ -69,6 +69,7 @@ interface InvoiceData {
   expires_at?: string | null
   recipientAddress: string
   receiveMode: string
+  allowFiatCheckout?: boolean
   settlementTarget?: 'crypto' | 'fiat'
   memo: string | null
   status: string
@@ -234,7 +235,14 @@ export default function Checkout() {
           }
         }
         const wholeNgn = data.amount_ngn ? /^\d+$/.test(data.amount_ngn) && Number(data.amount_ngn) >= 1 : false
-        if (data.fiatCheckout || (wholeNgn && data.settlementTarget !== 'fiat')) setPayMethod('bank')
+        const bankTransferAvailable = Boolean(
+          data.fiatCheckout ||
+            (data.allowFiatCheckout !== false &&
+              data.receiveMode !== 'private' &&
+              wholeNgn &&
+              data.settlementTarget !== 'fiat'),
+        )
+        if (bankTransferAvailable) setPayMethod('bank')
         else setPayMethod('wallet')
       })
       .catch((err: unknown) => {
@@ -772,6 +780,13 @@ export default function Checkout() {
   const wholeNgnEligible = Boolean(
     invoice.amount_ngn && /^\d+$/.test(invoice.amount_ngn) && Number(invoice.amount_ngn) >= 1,
   )
+  const bankTransferAvailable = Boolean(
+    invoice.fiatCheckout ||
+      (invoice.allowFiatCheckout !== false &&
+        invoice.receiveMode !== 'private' &&
+        wholeNgnEligible &&
+        invoice.settlementTarget !== 'fiat'),
+  )
   const headerTokenAmount = pajOrder?.tokenAmount ?? displayAmount
   const headerTokenSymbol = pajOrder?.tokenSymbol ?? token.symbol
 
@@ -956,23 +971,24 @@ export default function Checkout() {
       )}
 
       <div
-        className="mt-5 grid grid-cols-2 gap-1 rounded-pill border border-primary/10 bg-background p-1"
+        className={`mt-5 grid ${bankTransferAvailable ? 'grid-cols-2' : 'grid-cols-1'} gap-1 rounded-pill border border-primary/10 bg-background p-1`}
         role="tablist"
         aria-label="Payment method"
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={payMethod === 'bank'}
-          disabled={!wholeNgnEligible && !invoice.fiatCheckout}
-          onClick={() => setPayMethod('bank')}
-          className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-45 ${
-            payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
-          }`}
-        >
-          <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
-          Bank transfer
-        </button>
+        {bankTransferAvailable && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={payMethod === 'bank'}
+            onClick={() => setPayMethod('bank')}
+            className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+              payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+            }`}
+          >
+            <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
+            Bank transfer
+          </button>
+        )}
         <button
           type="button"
           role="tab"

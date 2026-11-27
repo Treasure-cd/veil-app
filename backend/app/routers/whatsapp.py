@@ -25,7 +25,10 @@ from core.session import get_session
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 logger = logging.getLogger(__name__)
 
-MENU = "I can help with payments. Try: `link 5000 for lunch`, `recent`, or `help`."
+MENU = (
+    "I can help with payments. Try: `link 5000 for lunch`, `link 5000 private`, "
+    "`link 5000 crypto only`, `recent`, or `help`."
+)
 APOLOGY = "Sorry, Veil couldn't process that just now. Please try again shortly."
 
 
@@ -192,6 +195,14 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
         if parsed["amount_error"] == "too_high":
             return _twiml("The maximum request is ₦10,000,000. Please send a lower amount.")
 
+        receive_mode = parsed["receive_mode"] or (
+            "private" if settings.WHATSAPP_PRIVATE_PAYMENTS else "public"
+        )
+        allow_fiat_checkout = (
+            "fossapay" in settings.whatsapp_payment_methods
+            and not parsed["crypto_only"]
+            and receive_mode != "private"
+        )
         intent = await create_payment_intent(
             db=db,
             user_id=user.id,
@@ -201,6 +212,8 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
             token="USDC",
             memo=parsed["memo"],
             source="whatsapp",
+            receive_mode=receive_mode,
+            allow_fiat_checkout=allow_fiat_checkout,
         )
         if session:
             await db.delete(session)
@@ -208,9 +221,16 @@ async def whatsapp_webhook(request: Request, db: AsyncSession = Depends(get_sess
 
         token, token_amount = _token_details(intent)
         checkout_url = f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}"
+        if receive_mode == "private":
+            payment_options = "private USDC only"
+        elif allow_fiat_checkout:
+            payment_options = "USDC or bank transfer"
+        else:
+            payment_options = "USDC only"
         reply = (
             f"Checkout link: {checkout_url}\n"
             f"{_format_ngn(parsed['amount_ngn'])} (≈ {token_amount.normalize():f} {token})\n"
+            f"Payment options: {payment_options}.\n"
             "Valid for 30 minutes."
         )
         return _twiml(reply)

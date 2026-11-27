@@ -1,5 +1,5 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, computed_field, AliasChoices, model_validator
+from pydantic import Field, AliasChoices, field_validator, model_validator
 from functools import lru_cache
 from typing import List
 import dotenv
@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     WHATSAPP_DEMO_MODE: str = Field(default="false")
     WHATSAPP_DEMO_MAX_NUMBERS: int = Field(default=10, ge=0)
     WHATSAPP_DEMO_MERCHANT_WALLET: str | None = Field(default=None)
+    WHATSAPP_PAYMENT_METHODS: str = Field(default="usdc,fossapay")
+    WHATSAPP_PRIVATE_PAYMENTS: bool = Field(default=False)
     JWT_SECRET: str = Field(..., min_length=32)
     FOSSAPAY_API_KEY: str = Field(...)
     FOSSAPAY_SECRET:str =Field(...)
@@ -80,6 +82,31 @@ class Settings(BaseSettings):
     PAJCASH_APIKEY: str | None = Field(default=None)
     PAJCASH_BASE_URL: str = Field(default="https://api.paj.cash")
     PAJCASH_WEBHOOK_SECRET: str | None = Field(default=None)
+
+    @field_validator("WHATSAPP_PAYMENT_METHODS", mode="before")
+    @classmethod
+    def _normalize_whatsapp_payment_methods(cls, value: str) -> str:
+        if not isinstance(value, str):
+            raise ValueError("WHATSAPP_PAYMENT_METHODS must be a comma-separated string")
+        methods = {method.strip().lower() for method in value.split(",") if method.strip()}
+        if "usdc" not in methods or methods - {"usdc", "fossapay"}:
+            raise ValueError(
+                "WHATSAPP_PAYMENT_METHODS must include usdc and may also include fossapay"
+            )
+        return ",".join(method for method in ("usdc", "fossapay") if method in methods)
+
+    @model_validator(mode="after")
+    def _validate_whatsapp_payment_settings(self) -> "Settings":
+        if self.WHATSAPP_PRIVATE_PAYMENTS and "fossapay" in self.whatsapp_payment_methods:
+            raise ValueError(
+                "Private WhatsApp payments cannot offer FossaPay; set "
+                "WHATSAPP_PAYMENT_METHODS=usdc"
+            )
+        return self
+
+    @property
+    def whatsapp_payment_methods(self) -> frozenset[str]:
+        return frozenset(self.WHATSAPP_PAYMENT_METHODS.split(","))
 
     @property
     def allowed_origins_list(self) -> List[str]:
