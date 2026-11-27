@@ -55,8 +55,10 @@ import { payPrivateInvoice } from '../lib/umbra'
 
 const PAJ_TOKENS = ['USDC', 'SOL', 'USDT', 'USDG'] as const
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
+const TOKEN_2022_PROGRAM_ID = new PublicKey('TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb')
 const ASSOCIATED_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
+const DEFAULT_TX_FEE_LAMPORTS = 5_000n
 
 interface InvoiceData {
   id: string
@@ -87,9 +89,13 @@ function quoteMatchesChoice(order: PajOfframpOrder | null, choice: string, custo
   return order.tokenSymbol.toUpperCase() === choice
 }
 
-async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
+async function associatedTokenAddress(
+  owner: PublicKey,
+  mint: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
+) {
   const [address] = await PublicKey.findProgramAddress(
-    [owner.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mint.toBytes()],
+    [owner.toBytes(), tokenProgramId.toBytes(), mint.toBytes()],
     ASSOCIATED_PROGRAM_ID,
   )
   return address
@@ -108,6 +114,7 @@ function createAssociatedTokenAccountIdempotentInstruction(
   owner: PublicKey,
   mint: PublicKey,
   account: PublicKey,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
 ) {
   return new TransactionInstruction({
     programId: ASSOCIATED_PROGRAM_ID,
@@ -117,7 +124,7 @@ function createAssociatedTokenAccountIdempotentInstruction(
       { pubkey: owner, isSigner: false, isWritable: false },
       { pubkey: mint, isSigner: false, isWritable: false },
       { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
-      { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+      { pubkey: tokenProgramId, isSigner: false, isWritable: false },
     ],
     data: new Uint8Array([1]),
   })
@@ -130,6 +137,7 @@ function transferCheckedInstruction(
   owner: PublicKey,
   amount: bigint,
   decimals: number,
+  tokenProgramId: PublicKey = TOKEN_PROGRAM_ID,
 ) {
   const data = new Uint8Array(10)
   data[0] = 12
@@ -138,7 +146,7 @@ function transferCheckedInstruction(
   }
   data[9] = decimals
   return new TransactionInstruction({
-    programId: TOKEN_PROGRAM_ID,
+    programId: tokenProgramId,
     keys: [
       { pubkey: source, isSigner: false, isWritable: true },
       { pubkey: mint, isSigner: false, isWritable: false },
@@ -535,17 +543,28 @@ export default function Checkout() {
         }
 
         const instructions: TransactionInstruction[] = []
+        paymentPhase = 'Checking your SOL balance'
+        const payerSolLamports = BigInt(await connection.getBalance(publicKey, 'confirmed'))
+        let needsDestinationAta = false
+        let tokenProgramId = TOKEN_PROGRAM_ID
 
         if (payMint === SOL_MINT) {
-          paymentPhase = 'Checking your SOL balance'
-          const balanceLamports = BigInt(await connection.getBalance(publicKey, 'confirmed'))
-          if (balanceLamports < amount) {
+          if (payerSolLamports < amount) {
             throw new Error(
-              `Your wallet has ${formatAmount(balanceLamports.toString(), 9)} SOL on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(amount.toString(), 9)} SOL.`,
+              `Your wallet has ${formatAmount(payerSolLamports.toString(), 9)} SOL on ${NETWORK_LABEL[NETWORK]}, but this payment needs ${formatAmount(amount.toString(), 9)} SOL.`,
             )
           }
           if (amount > BigInt(Number.MAX_SAFE_INTEGER)) {
             throw new Error('SOL transfer amount exceeds safe integer lamport range.')
+          }
+          const recipientAccount = await connection.getAccountInfo(recipient, 'confirmed')
+          if (!recipientAccount) {
+            const minSystemRent = BigInt(await connection.getMinimumBalanceForRentExemption(0, 'confirmed'))
+            if (amount < minSystemRent) {
+              throw new Error(
+                `This deposit address is uninitialized, so Solana requires at least ${formatAmount(minSystemRent.toString(), 9)} SOL for account rent.`,
+              )
+            }
           }
           instructions.push(
             SystemProgram.transfer({
@@ -556,12 +575,27 @@ export default function Checkout() {
           )
         } else {
           const mint = new PublicKey(payMint)
-          const payerAta = await associatedTokenAddress(publicKey, mint)
-          const destination = await associatedTokenAddress(recipient, mint)
+          const mintAccount = await connection.getAccountInfo(mint, 'confirmed')
+          if (!mintAccount) {
+            throw new Error(
+              `The ${paySymbol} token mint (${payMint}) was not found on ${NETWORK_LABEL[NETWORK]}.`,
+            )
+          }
+          if (mintAccount.owner.equals(TOKEN_2022_PROGRAM_ID)) {
+            tokenProgramId = TOKEN_2022_PROGRAM_ID
+          } else if (!mintAccount.owner.equals(TOKEN_PROGRAM_ID)) {
+            throw new Error(
+              `The token mint ${payMint} uses an unsupported Solana token program.`,
+            )
+          }
+
+          const payerAta = await associatedTokenAddress(publicKey, mint, tokenProgramId)
+          const destination = await associatedTokenAddress(recipient, mint, tokenProgramId)
           console.info('[Veil checkout] payer token account lookup', {
             configuredNetwork: NETWORK,
             rpcEndpoint,
             mint: payMint,
+            tokenProgramId: tokenProgramId.toBase58(),
             payer: publicKey.toBase58(),
             payerAta: payerAta.toBase58(),
           })
@@ -620,12 +654,27 @@ export default function Checkout() {
           paymentPhase = 'Checking the destination token account'
           const destinationAccount = await connection.getAccountInfo(destination, 'confirmed')
           if (!destinationAccount) {
+            needsDestinationAta = true
             instructions.push(
-              createAssociatedTokenAccountIdempotentInstruction(publicKey, recipient, mint, destination),
+              createAssociatedTokenAccountIdempotentInstruction(
+                publicKey,
+                recipient,
+                mint,
+                destination,
+                tokenProgramId,
+              ),
             )
           }
           instructions.push(
-            transferCheckedInstruction(source, destination, mint, publicKey, amount, payDecimals),
+            transferCheckedInstruction(
+              source,
+              destination,
+              mint,
+              publicKey,
+              amount,
+              payDecimals,
+              tokenProgramId,
+            ),
           )
         }
 
@@ -643,12 +692,40 @@ export default function Checkout() {
           recentBlockhash: blockhash.blockhash,
           instructions,
         }).compileToV0Message()
+
+        let feeLamports = DEFAULT_TX_FEE_LAMPORTS
+        try {
+          const feeResponse = await connection.getFeeForMessage(messageV0, 'confirmed')
+          if (feeResponse.value !== null) {
+            feeLamports = BigInt(feeResponse.value)
+          }
+        } catch {
+          // Fall back to standard single-signer fee if fee estimation fails.
+        }
+
+        let ataRentLamports = 0n
+        if (needsDestinationAta) {
+          const ataSpace = tokenProgramId.equals(TOKEN_2022_PROGRAM_ID) ? 182 : 165
+          ataRentLamports = BigInt(await connection.getMinimumBalanceForRentExemption(ataSpace, 'confirmed'))
+        }
+        const requiredSolLamports = (payMint === SOL_MINT ? amount : 0n) + feeLamports + ataRentLamports
+        if (payerSolLamports < requiredSolLamports) {
+          if (payerSolLamports === 0n) {
+            throw new Error(
+              `Your wallet has 0 SOL on ${NETWORK_LABEL[NETWORK]} to pay Solana network fees${needsDestinationAta ? ' and create the recipient token account' : ''}. Add at least ${formatAmount(requiredSolLamports.toString(), 9)} SOL and try again.`,
+            )
+          }
+          throw new Error(
+            `Your wallet has ${formatAmount(payerSolLamports.toString(), 9)} SOL on ${NETWORK_LABEL[NETWORK]}, but needs at least ${formatAmount(requiredSolLamports.toString(), 9)} SOL${payMint === SOL_MINT ? ' (including network fees)' : needsDestinationAta ? ' for network fees and recipient token account creation' : ' for network fees'}.`,
+          )
+        }
+
         const transaction = new VersionedTransaction(messageV0)
 
         let simulation
         paymentPhase = 'Simulating the Solana transaction'
         try {
-          simulation = await connection.simulateTransaction(transaction)
+          simulation = await connection.simulateTransaction(transaction, { commitment: 'confirmed' })
         } catch (simulationError) {
           console.error('[Veil checkout] transaction simulation RPC failed', {
             configuredNetwork: NETWORK,
@@ -664,9 +741,12 @@ export default function Checkout() {
 
         if (simulation.value.err) {
           const logs = simulation.value.logs?.slice(-12).join('\n')
+          const accountNotFoundHint = simulation.value.err === 'AccountNotFound'
+            ? ` (your fee-paying wallet may have 0 SOL on ${NETWORK_LABEL[NETWORK]} or a recent deposit has not propagated to this RPC node yet)`
+            : ''
           throw new Error(
             [
-              `Solana simulation rejected this transaction: ${JSON.stringify(simulation.value.err)}`,
+              `Solana simulation rejected this transaction: ${JSON.stringify(simulation.value.err)}${accountNotFoundHint}`,
               logs ? `Program logs:\n${logs}` : null,
             ]
               .filter(Boolean)
