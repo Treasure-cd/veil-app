@@ -243,7 +243,7 @@ async def whatsapp_webhook(
         await db.refresh(intent)
 
         # Send the payment link back to the merchant on WhatsApp
-        pay_link = f"http://localhost:3000/app/checkout/{intent.id}"
+        pay_link = f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}"
         reply_msg = (
             f"⚡ Payment Link Generated!\n\n"
             f"📋 *Invoice Details*\n"

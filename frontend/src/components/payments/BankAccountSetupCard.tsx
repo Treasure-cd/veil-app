@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Bank, CheckCircle, Copy, MagnifyingGlass, Trash } from '@phosphor-icons/react'
 import { Button } from '../ui/Button'
 import { truncateAddress } from '../../lib/format'
+import { IS_MAINNET } from '../../lib/network'
 import {
   deleteMerchantBankAccount,
   listMerchantBankAccounts,
@@ -185,7 +186,7 @@ export function BankAccountSetupCard({
                 </p>
                 {acc.solanaAddress && (
                   <div className="flex flex-wrap items-center gap-1.5 text-xs text-foreground/55">
-                    <span>Auto-offramp address:</span>
+                    <span>{IS_MAINNET ? 'Auto-offramp address:' : 'Auto-offramp address (Mainnet):'}</span>
                     <span className="font-mono text-primary" title={acc.solanaAddress}>
                       {truncateAddress(acc.solanaAddress, 5)}
                     </span>

@@ -7,29 +7,39 @@ export default defineConfig(({ command, mode }) => {
   // Vite serves a static browser bundle, so expose only the client settings
   // the app needs as explicit process.env replacements at build time.
   const fileEnv = loadEnv(mode, process.cwd(), '')
-  const env = {
-    ...fileEnv,
-    API_URL: process.env.API_URL ?? fileEnv.API_URL,
-    SOLANA_NETWORK: process.env.SOLANA_NETWORK ?? fileEnv.SOLANA_NETWORK,
-    SOLANA_RPC_URL: process.env.SOLANA_RPC_URL ?? fileEnv.SOLANA_RPC_URL,
-    SOLANA_WS_URL: process.env.SOLANA_WS_URL ?? fileEnv.SOLANA_WS_URL,
-    SOLANA_USDC_MINT: process.env.SOLANA_USDC_MINT ?? fileEnv.SOLANA_USDC_MINT,
-    USDC_MINT: process.env.USDC_MINT ?? fileEnv.USDC_MINT,
+  const readVar = (key: string, altKey?: string) =>
+    process.env[key] ??
+    fileEnv[key] ??
+    (altKey ? (process.env[altKey] ?? fileEnv[altKey]) : undefined) ??
+    process.env[`VITE_${key}`] ??
+    fileEnv[`VITE_${key}`]
+
+  const rawNetwork = readVar('SOLANA_NETWORK')?.trim().toLowerCase()
+  if (rawNetwork && !['mainnet-beta', 'mainnet', 'devnet'].includes(rawNetwork)) {
+    throw new Error("SOLANA_NETWORK must be set to 'mainnet-beta', 'mainnet', or 'devnet'.")
   }
-  const network = env.SOLANA_NETWORK?.trim().toLowerCase()
+  const network = rawNetwork === 'devnet' ? 'devnet' : 'mainnet-beta'
+  const rpcUrl =
+    readVar('SOLANA_RPC_URL')?.trim() ||
+    (network === 'devnet' ? 'https://api.devnet.solana.com' : 'https://api.mainnet-beta.solana.com')
+  const wsUrl =
+    readVar('SOLANA_WS_URL')?.trim() ||
+    rpcUrl.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
+  const usdcMint =
+    readVar('SOLANA_USDC_MINT', 'USDC_MINT')?.trim() ||
+    (network === 'devnet'
+      ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
+      : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
+  const apiUrl = readVar('API_URL')?.trim() ?? ''
 
   if (command === 'build' && mode === 'production') {
-    if (!['devnet', 'mainnet', 'mainnet-beta'].includes(network ?? '')) {
-      throw new Error('Production builds require SOLANA_NETWORK to be explicitly set to devnet or mainnet-beta.')
-    }
-
     for (const [name, value] of [
-      ['API_URL', env.API_URL],
-      ['SOLANA_RPC_URL', env.SOLANA_RPC_URL],
+      ['API_URL', apiUrl],
+      ['SOLANA_RPC_URL', rpcUrl],
     ] as const) {
       let parsed: URL
       try {
-        parsed = new URL(value ?? '')
+        parsed = new URL(value)
       } catch {
         throw new Error(`Production builds require a valid ${name}.`)
       }
@@ -42,11 +52,11 @@ export default defineConfig(({ command, mode }) => {
   return {
     plugins: [react(), tailwindcss()],
     define: {
-      'process.env.API_URL': JSON.stringify(env.API_URL ?? ''),
-      'process.env.SOLANA_NETWORK': JSON.stringify(env.SOLANA_NETWORK ?? ''),
-      'process.env.SOLANA_RPC_URL': JSON.stringify(env.SOLANA_RPC_URL ?? ''),
-      'process.env.SOLANA_WS_URL': JSON.stringify(env.SOLANA_WS_URL ?? ''),
-      'process.env.SOLANA_USDC_MINT': JSON.stringify(env.SOLANA_USDC_MINT ?? env.USDC_MINT ?? ''),
+      'process.env.API_URL': JSON.stringify(apiUrl),
+      'process.env.SOLANA_NETWORK': JSON.stringify(network),
+      'process.env.SOLANA_RPC_URL': JSON.stringify(rpcUrl),
+      'process.env.SOLANA_WS_URL': JSON.stringify(wsUrl),
+      'process.env.SOLANA_USDC_MINT': JSON.stringify(usdcMint),
     },
   }
 })

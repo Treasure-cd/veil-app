@@ -40,16 +40,22 @@ import {
   type MerchantBankAccount,
   type PajOfframpOrder,
 } from '../services/paj'
-import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, USDC_MINT } from '../lib/network'
+import {
+  IS_DEVNET,
+  IS_MAINNET,
+  KNOWN_TOKENS,
+  NETWORK,
+  NETWORK_LABEL,
+  SOLANA_GENESIS_HASH,
+  SOL_MINT,
+  USDC_MINT,
+  solanaExplorerTxUrl,
+} from '../lib/network'
 
-const SOL_MINT = 'So11111111111111111111111111111111111111112'
 const PAJ_TOKENS = ['USDC', 'SOL', 'USDT', 'USDG'] as const
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
 const ASSOCIATED_PROGRAM_ID = new PublicKey('ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL')
 const MEMO_PROGRAM_ID = new PublicKey('MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr')
-const TOKENS: Record<string, { symbol: string; decimals: number }> = {
-  [USDC_MINT]: { symbol: 'USDC', decimals: 6 },
-}
 
 interface InvoiceData {
   id: string
@@ -68,8 +74,15 @@ interface InvoiceData {
   fundSignature?: string | null
   failureReason?: string | null
   fiatCheckout?: FiatPayment | null
+  fiatPayout?: FiatPayment | { status: string; bankName?: string | null } | null
   pajOfframp?: PajOfframpOrder | null
   bankAccount?: MerchantBankAccount | null
+}
+
+function quoteMatchesChoice(order: PajOfframpOrder | null, choice: string, customMint: string) {
+  if (!order) return false
+  if (choice === 'CUSTOM') return order.mint === customMint.trim()
+  return order.tokenSymbol.toUpperCase() === choice
 }
 
 async function associatedTokenAddress(owner: PublicKey, mint: PublicKey) {
@@ -246,6 +259,7 @@ export default function Checkout() {
   const invoiceId = invoice?.id
   const invoiceStatus = invoice?.status
   const fiatCheckoutStatus = invoice?.fiatCheckout?.status
+  const pajOrderId = invoice?.pajOfframp?.id
   const pajOrderStatus = invoice?.pajOfframp?.status
 
   const handleReconcileFiat = useCallback(async () => {
@@ -254,6 +268,13 @@ export default function Checkout() {
     setFiatError(null)
     try {
       const updated = await reconcileIntentFiatCheckout(invoiceId)
+      if (updated.status === 'completed') {
+        const refreshed = await api<InvoiceData>(`/v1/payments/intents/${encodeURIComponent(invoiceId)}`).catch(() => null)
+        if (refreshed) {
+          setInvoice(refreshed)
+          return
+        }
+      }
       setInvoice((prev) => {
         if (!prev) return prev
         return {
@@ -274,7 +295,7 @@ export default function Checkout() {
     setPajChecking(true)
     setPajError(null)
     try {
-      const updated = await reconcileIntentPajOfframp(invoiceId)
+      const updated = await reconcileIntentPajOfframp(invoiceId, pajOrderId)
       setInvoice((prev) => {
         if (!prev) return prev
         return {
@@ -289,7 +310,7 @@ export default function Checkout() {
     } finally {
       setPajChecking(false)
     }
-  }, [invoiceId])
+  }, [invoiceId, pajOrderId])
 
   useEffect(() => {
     if (!invoiceId || invoiceStatus !== 'created' || (fiatCheckoutStatus !== 'pending' && fiatCheckoutStatus !== 'processing')) {
@@ -374,17 +395,18 @@ export default function Checkout() {
   async function handlePay() {
     if (!invoice || !publicKey || !connected) return
     setPaymentError(null)
+    setPajError(null)
     setPaying(true)
     let paymentPhase = 'Preparing the payment'
     const isFiatSettlement = invoice.settlementTarget === 'fiat'
-    const activeOrder = isFiatSettlement ? invoice.pajOfframp ?? null : null
+    let activeOrder = isFiatSettlement ? invoice.pajOfframp ?? null : null
     try {
       let pending = pendingTransaction
       if (!pending) {
         const rpcEndpoint = safeRpcEndpoint(connection.rpcEndpoint)
         let payMint = invoice.mint
-        let paySymbol = TOKENS[invoice.mint]?.symbol ?? 'USDC'
-        let payDecimals = TOKENS[invoice.mint]?.decimals ?? 6
+        let paySymbol = KNOWN_TOKENS[invoice.mint]?.symbol ?? 'USDC'
+        let payDecimals = KNOWN_TOKENS[invoice.mint]?.decimals ?? 6
         let amount = 0n
         let recipient: PublicKey
 
@@ -394,8 +416,18 @@ export default function Checkout() {
               `Paj Cash settles on Solana Mainnet, while this app is configured for ${NETWORK_LABEL[NETWORK]}. Send funds manually on Mainnet to the Paj deposit address or switch SOLANA_NETWORK to mainnet-beta.`,
             )
           }
-          if (!activeOrder || !activeOrder.tokenAmount) {
-            throw new Error('Generate a Paj Cash payment quote first to lock the deposit address and token amount.')
+          if (!activeOrder || !activeOrder.tokenAmount || !quoteMatchesChoice(activeOrder, pajTokenChoice, customMint)) {
+            const chosen = (pajTokenChoice === 'CUSTOM' ? customMint : pajTokenChoice).trim()
+            if (!chosen) {
+              throw new Error('Select a token or enter a valid Solana token mint address.')
+            }
+            paymentPhase = `Locking ${pajTokenChoice === 'CUSTOM' ? 'token' : pajTokenChoice} offramp quote`
+            const freshOrder = await createIntentPajOfframp(invoice.id, chosen)
+            activeOrder = freshOrder
+            setInvoice((prev) => (prev ? { ...prev, pajOfframp: freshOrder } : prev))
+          }
+          if (!activeOrder.tokenAmount) {
+            throw new Error('Paj Cash quote did not return a token amount. Refresh the quote and try again.')
           }
           payMint = activeOrder.mint
           paySymbol = activeOrder.tokenSymbol
@@ -403,15 +435,22 @@ export default function Checkout() {
           amount = decimalToAtomic(activeOrder.tokenAmount, payDecimals)
           recipient = new PublicKey(activeOrder.depositAddress)
         } else {
-          if (invoice.mint !== USDC_MINT) {
+          const directToken = KNOWN_TOKENS[invoice.mint]
+          if (!directToken) {
+            throw new Error('This checkout uses a token that is not supported for direct wallet payment.')
+          }
+          if (directToken.network && directToken.network !== NETWORK) {
             throw new Error(
-              `This payment request uses a different USDC mint than the configured ${NETWORK_LABEL[NETWORK]} network. Ask the merchant to create a new payment link on ${NETWORK_LABEL[NETWORK]}.`,
+              `This payment request uses ${directToken.symbol} on ${NETWORK_LABEL[directToken.network]}, while the app is configured for ${NETWORK_LABEL[NETWORK]}.`,
             )
           }
-          const token = TOKENS[invoice.mint]
-          if (!token) throw new Error('This checkout uses a token that is not supported on this network.')
-          paySymbol = token.symbol
-          payDecimals = token.decimals
+          if (invoice.mint !== USDC_MINT && invoice.mint !== SOL_MINT) {
+            throw new Error(
+              `This payment request uses a different ${directToken.symbol} mint than the configured ${NETWORK_LABEL[NETWORK]} network. Ask the merchant to create a new payment link on ${NETWORK_LABEL[NETWORK]}.`,
+            )
+          }
+          paySymbol = directToken.symbol
+          payDecimals = directToken.decimals
           amount = BigInt(invoice.amountAtomic)
           recipient = new PublicKey(invoice.recipientAddress)
         }
@@ -675,7 +714,7 @@ export default function Checkout() {
     )
   }
 
-  const token = TOKENS[invoice.mint]
+  const token = KNOWN_TOKENS[invoice.mint]
   if (!token || !/^\d+$/.test(invoice.amountAtomic) || BigInt(invoice.amountAtomic) <= 0n) {
     return (
       <CheckoutFrame>
@@ -696,6 +735,8 @@ export default function Checkout() {
   const isFiatSettlement = invoice.settlementTarget === 'fiat'
   const pajOrder = invoice.pajOfframp ?? null
   const pajBadge = pajOrder ? getPajStatusPresentation(pajOrder.status) : null
+  const selectedChoiceLabel = pajTokenChoice === 'CUSTOM' ? 'custom token' : pajTokenChoice
+  const matchesQuote = quoteMatchesChoice(pajOrder, pajTokenChoice, customMint)
   const paidByFiat = invoice.fiatCheckout?.status === 'completed'
   const paidByPaj = pajOrder?.status === 'COMPLETED'
   const wholeNgnEligible = Boolean(
@@ -724,6 +765,12 @@ export default function Checkout() {
               Amount: <span className="font-mono font-medium">{formatNgn(invoice.fiatCheckout.amountPayable ?? invoice.fiatCheckout.amount)}</span>
             </p>
             <p className="mt-0.5 font-mono text-emerald-800/80">Ref: {invoice.fiatCheckout.reference}</p>
+            {invoice.settlementTarget === 'fiat' && invoice.fiatPayout && (
+              <p className="mt-1 text-emerald-900/90">
+                Bank settlement ({invoice.fiatPayout.bankName || invoice.bankAccount?.bankName || 'Linked bank'}):{' '}
+                <span className="font-medium capitalize">{invoice.fiatPayout.status}</span>
+              </p>
+            )}
           </div>
         )}
         {pajOrder && !paidByFiat && (
@@ -766,7 +813,7 @@ export default function Checkout() {
         )}
         {(confirmedSignature || invoice.fundSignature) && (
           <a
-            href={`https://explorer.solana.com/tx/${encodeURIComponent(confirmedSignature || invoice.fundSignature || '')}?cluster=${NETWORK}`}
+            href={solanaExplorerTxUrl(confirmedSignature || invoice.fundSignature || '')}
             target="_blank"
             rel="noreferrer"
             className="mt-5 inline-flex items-center gap-2 text-sm font-semibold text-primary underline underline-offset-4"
@@ -1009,14 +1056,16 @@ export default function Checkout() {
                   className="mt-3"
                   size="sm"
                   fullWidth
-                  variant={pajOrder ? 'secondary' : 'primary'}
+                  variant={matchesQuote ? 'secondary' : 'primary'}
                   loading={pajLoading}
                   disabled={expired}
                   onClick={() => void handleCreatePajOrder()}
                 >
-                  {pajOrder
-                    ? `Update quote for ${pajTokenChoice === 'CUSTOM' ? 'custom token' : pajTokenChoice}`
-                    : `Get ${pajTokenChoice === 'CUSTOM' ? 'token' : pajTokenChoice} payment quote`}
+                  {!pajOrder
+                    ? `Get ${selectedChoiceLabel} payment quote`
+                    : matchesQuote
+                      ? `Refresh ${selectedChoiceLabel} quote`
+                      : `Update quote for ${selectedChoiceLabel}`}
                 </Button>
               </div>
 
@@ -1053,7 +1102,9 @@ export default function Checkout() {
                   <div className="flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-background px-3 py-2">
                     <div className="min-w-0">
                       <p className="text-[11px] uppercase tracking-wider text-foreground/50">
-                        Paj Cash Solana Mainnet deposit address
+                        {IS_MAINNET
+                          ? 'Paj Cash Solana Mainnet deposit address'
+                          : 'Paj Cash deposit address (Solana Mainnet only)'}
                       </p>
                       <p className="truncate font-mono text-xs text-primary">{pajOrder.depositAddress}</p>
                     </div>
@@ -1108,7 +1159,7 @@ export default function Checkout() {
                 ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
                 : ''}
               {paymentError}
-              {NETWORK === 'devnet' && paymentError.includes('No USDC token account') && (
+              {IS_DEVNET && paymentError.includes('No USDC token account') && (
                 <>
                   {' '}
                   <a
@@ -1133,7 +1184,9 @@ export default function Checkout() {
               <p className="text-xs text-foreground/55">
                 Connected: {wallet?.adapter.name ?? 'Wallet'} · {truncateAddress(publicKey.toBase58())}
               </p>
-              <p className="text-xs text-foreground/45">This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.</p>
+              <p className="text-xs text-foreground/45" title={`Active mint: ${isFiatSettlement && pajOrder ? pajOrder.mint : invoice.mint}`}>
+                This payment uses Solana {NETWORK_LABEL[NETWORK]}. If your wallet reports a network error, switch it to {NETWORK_LABEL[NETWORK]}.
+              </p>
               <Button
                 size="lg"
                 fullWidth
@@ -1141,14 +1194,17 @@ export default function Checkout() {
                 onClick={() => void handlePay()}
                 disabled={
                   (expired && !pendingTransaction) ||
-                  (isFiatSettlement && (!pajOrder || NETWORK !== 'mainnet-beta'))
+                  (isFiatSettlement &&
+                    (NETWORK !== 'mainnet-beta' || (pajTokenChoice === 'CUSTOM' && !customMint.trim())))
                 }
               >
                 {pendingTransaction
                   ? 'Retry payment confirmation'
-                  : isFiatSettlement && pajOrder?.tokenAmount
-                    ? `Pay ${pajOrder.tokenAmount} ${pajOrder.tokenSymbol} now`
-                    : 'Pay now'}
+                  : isFiatSettlement
+                    ? matchesQuote && pajOrder?.tokenAmount
+                      ? `Pay ${pajOrder.tokenAmount} ${pajOrder.tokenSymbol} now`
+                      : `Pay with ${selectedChoiceLabel} now`
+                    : `Pay ${displayAmount} ${token.symbol} now`}
               </Button>
             </div>
           ) : installedWallets.length > 0 ? (

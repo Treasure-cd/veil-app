@@ -116,10 +116,13 @@ export function createIntentPajOfframp(intentId: string, token: string) {
   )
 }
 
-export function reconcileIntentPajOfframp(intentId: string) {
+export function reconcileIntentPajOfframp(intentId: string, orderId?: string) {
   return api<PajOfframpOrder>(
     `/v1/payments/intents/${encodeURIComponent(intentId)}/paj-offramp/reconcile`,
-    { method: 'POST' },
+    {
+      method: 'POST',
+      body: JSON.stringify(orderId ? { orderId } : {}),
+    },
   )
 }
 

@@ -10,7 +10,7 @@ import {
 import { Button } from '../ui/Button'
 import { truncateAddress } from '../../lib/format'
 import { formatNgn } from '../../lib/money'
-import { NETWORK } from '../../lib/network'
+import { solanaExplorerTxUrl } from '../../lib/network'
 import {
   createFiatPayout,
   expireFiatPayment,
@@ -607,7 +607,7 @@ export function PayoutsPanel() {
                               </p>
                               {order.txSignature && (
                                 <a
-                                  href={`https://explorer.solana.com/tx/${encodeURIComponent(order.txSignature)}?cluster=${NETWORK}`}
+                                  href={solanaExplorerTxUrl(order.txSignature)}
                                   target="_blank"
                                   rel="noreferrer"
                                   className="text-xs text-primary/70 underline underline-offset-2"

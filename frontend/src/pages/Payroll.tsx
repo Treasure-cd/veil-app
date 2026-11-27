@@ -11,7 +11,7 @@ import { Button } from '../components/ui/Button'
 import { api } from '../services/api'
 import { fundPayrollVault } from '../lib/umbra'
 import { Money } from '../components/ui/Money'
-import { NETWORK } from '../lib/network'
+import { NETWORK, NETWORK_LABEL } from '../lib/network'
 
 interface Rates { sol: string; usdc: string; asOf: string }
 
@@ -349,7 +349,7 @@ export default function Payroll() {
 
         {NETWORK !== 'devnet' && (
           <p role="status" className="rounded-card border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
-            Payroll vault funding is unavailable on Mainnet. The current Umbra integration is configured for Devnet only.
+            Payroll vault funding is unavailable on {NETWORK_LABEL[NETWORK]}. The current Umbra integration is configured for Devnet only.
           </p>
         )}
 

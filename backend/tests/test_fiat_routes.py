@@ -160,11 +160,12 @@ class FiatRouterTests(unittest.IsolatedAsyncioTestCase):
             "data": data,
             "timestamp": "2026-11-25T21:40:01.000Z",
         }
-        ok_webhook = self.client.post(
-            "/v1/webhook/fossapay",
-            json=webhook_payload,
-            headers={"x-fossapay-Signature": _sign_webhook(data)},
-        )
+        with patch.object(settings, "FOSSAPAY_WEBHOOK_SECRET", "whsec_test_secret"):
+            ok_webhook = self.client.post(
+                "/v1/webhook/fossapay",
+                json=webhook_payload,
+                headers={"x-fossapay-Signature": _sign_webhook(data)},
+            )
         self.assertEqual(ok_webhook.status_code, 200)
         self.assertTrue(ok_webhook.json()["accepted"])
 

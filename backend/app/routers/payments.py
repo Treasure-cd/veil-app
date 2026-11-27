@@ -4,10 +4,10 @@ import time
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
-from decimal import Decimal
+from decimal import Decimal, ROUND_DOWN
 
 import base58
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Query
 from pydantic import AliasChoices, BaseModel, Field, field_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -90,6 +90,10 @@ class RegisterPajBankAccountRequest(BaseModel):
 
 class CreateIntentPajOfframpRequest(BaseModel):
     token: str = Field(default="USDC", min_length=1, max_length=64)
+
+
+class ReconcilePajOfframpRequest(BaseModel):
+    orderId: Optional[UUID] = None
 
 
 class CreateFiatCheckoutRequest(BaseModel):
@@ -238,15 +242,26 @@ def format_paj_offramp(order: PajOfframpOrder, is_owner: bool = True) -> dict:
     return data
 
 
+_PAJ_STATUS_PRIORITY = {
+    PajOrderStatus.COMPLETED.value: 0,
+    PajOrderStatus.PROCESSING.value: 1,
+    PajOrderStatus.INIT.value: 2,
+    PajOrderStatus.ERROR.value: 3,
+}
+
+
 async def _latest_paj_offramp_for_intent(
     db: AsyncSession, intent_id: UUID
 ) -> PajOfframpOrder | None:
     stmt = (
         select(PajOfframpOrder)
         .where(PajOfframpOrder.payment_intent_id == intent_id)
-        .order_by(PajOfframpOrder.created_at.desc())
+        .order_by(PajOfframpOrder.updated_at.desc(), PajOfframpOrder.created_at.desc())
     )
-    return (await db.execute(stmt)).scalars().first()
+    orders = (await db.execute(stmt)).scalars().all()
+    if not orders:
+        return None
+    return min(orders, key=lambda o: _PAJ_STATUS_PRIORITY.get(o.status, 99))
 
 
 async def mark_intent_funded_from_paj(
@@ -300,6 +315,62 @@ async def _latest_checkout_for_intent(
     return (await db.execute(stmt)).scalars().first()
 
 
+async def _latest_payout_for_intent(
+    db: AsyncSession, intent_id: UUID
+) -> FiatPayment | None:
+    stmt = (
+        select(FiatPayment)
+        .where(
+            FiatPayment.payment_intent_id == intent_id,
+            FiatPayment.flow == FiatPaymentFlow.PAYOUT.value,
+        )
+        .order_by(FiatPayment.created_at.desc())
+    )
+    return (await db.execute(stmt)).scalars().first()
+
+
+async def _settle_fiat_intent_payout(
+    db: AsyncSession, intent: PaymentIntent, checkout: FiatPayment
+) -> FiatPayment | None:
+    """When a fiat-settled intent is paid by bank transfer, disburse NGN to the merchant's linked bank."""
+    if intent.settlement_target != SettlementTarget.FIAT.value or not intent.bank_account_id:
+        return None
+
+    existing = await _latest_payout_for_intent(db, intent.id)
+    if existing is not None:
+        return existing
+
+    bank_account = await db.get(MerchantBankAccount, intent.bank_account_id)
+    if bank_account is None:
+        return None
+
+    try:
+        raw_amount = Decimal(str(checkout.settlement_amount or checkout.amount))
+        payout_ngn = int(raw_amount.to_integral_value(rounding=ROUND_DOWN))
+    except Exception:
+        return None
+    if payout_ngn < 1:
+        return None
+
+    try:
+        return await FossaPayService().create_payout(
+            db,
+            user_id=intent.user_id,
+            payment_intent_id=intent.id,
+            amount_ngn=payout_ngn,
+            reference=f"SETTLE-{intent.id.hex[:20]}",
+            bank_code=bank_account.bank_code,
+            bank_name=bank_account.bank_name,
+            account_name=bank_account.account_name,
+            account_number=bank_account.account_number,
+            remarks=(intent.memo or intent.merchant_ref)[:255],
+            idempotency_key=f"intent-fiat-settle:{intent.id}",
+        )
+    except Exception:
+        logger.exception("Auto-payout settlement failed for fiat intent %s", intent.id)
+        return None
+
+
 async def mark_intent_funded_from_fiat(
     db: AsyncSession, payment: FiatPayment
 ) -> PaymentIntent | None:
@@ -318,6 +389,8 @@ async def mark_intent_funded_from_fiat(
         db.add(intent)
         await db.commit()
         await db.refresh(intent)
+    if intent is not None:
+        await _settle_fiat_intent_payout(db, intent, payment)
     return intent
 
 def format_intent(
@@ -326,6 +399,7 @@ def format_intent(
     fiat_checkout: FiatPayment | None = None,
     paj_offramp: PajOfframpOrder | None = None,
     bank_account: MerchantBankAccount | None = None,
+    fiat_payout: FiatPayment | None = None,
 ) -> dict:
     data = {
         "id": str(intent.id),
@@ -359,6 +433,15 @@ def format_intent(
             if bank_account is not None
             else None
         ),
+        "fiatPayout": (
+            format_fiat_payment(fiat_payout, is_owner=True)
+            if is_owner and fiat_payout is not None
+            else (
+                {"status": fiat_payout.status, "bankName": fiat_payout.bank_name}
+                if fiat_payout is not None
+                else None
+            )
+        ),
     }
     # Only show these fields to the merchant who owns the intent
     if is_owner:
@@ -368,7 +451,8 @@ def format_intent(
             "claimSignature": intent.claim_signature,
             "failureReason": intent.failure_reason
         })
-    data["amount_token"] = format(Decimal(intent.amount_atomic) / Decimal(10 ** (9 if intent.mint != settings.USDC_MINT else 6)), "f")
+    token_decimals = 6 if intent.mint in settings.known_usdc_mints else 9
+    data["amount_token"] = format(Decimal(intent.amount_atomic) / Decimal(10 ** token_decimals), "f")
     return data
 
 async def verify_transfer(
@@ -612,6 +696,7 @@ async def get_intent(
 
     fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
     paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
+    fiat_payout = await _latest_payout_for_intent(db, intent.id)
     bank_account = (
         await db.get(MerchantBankAccount, intent.bank_account_id)
         if intent.bank_account_id
@@ -624,6 +709,7 @@ async def get_intent(
         fiat_checkout=fiat_checkout,
         paj_offramp=paj_offramp,
         bank_account=bank_account,
+        fiat_payout=fiat_payout,
     )
 
 
@@ -685,6 +771,10 @@ async def create_intent_paj_offramp(
     ).scalars().first()
     is_owner = current_user is not None and intent.user_id == current_user.id
     if existing_for_mint:
+        existing_for_mint.updated_at = utc_now()
+        db.add(existing_for_mint)
+        await db.commit()
+        await db.refresh(existing_for_mint)
         return format_paj_offramp(existing_for_mint, is_owner=is_owner)
 
     try:
@@ -713,6 +803,7 @@ async def create_intent_paj_offramp(
 @router.post("/intents/{intent_id}/paj-offramp/reconcile")
 async def reconcile_intent_paj_offramp(
     intent_id: str,
+    req: Optional[ReconcilePajOfframpRequest] = Body(default=None),
     current_user: Optional[User] = Depends(get_optional_user),
     db: AsyncSession = Depends(get_session),
 ):
@@ -721,7 +812,13 @@ async def reconcile_intent_paj_offramp(
     if not intent:
         raise HTTPException(status_code=404, detail="intent_not_found")
 
-    order = await _latest_paj_offramp_for_intent(db, intent.id)
+    order: PajOfframpOrder | None = None
+    if req and req.orderId is not None:
+        order = await db.get(PajOfframpOrder, req.orderId)
+        if not order or order.payment_intent_id != intent.id:
+            raise HTTPException(status_code=404, detail="paj_offramp_not_found")
+    else:
+        order = await _latest_paj_offramp_for_intent(db, intent.id)
     if not order:
         raise HTTPException(status_code=404, detail="No Paj Cash offramp order exists for this payment.")
 
@@ -843,7 +940,7 @@ async def confirm_fund(
         verify_mint = offramp_order.mint
         verify_address = offramp_order.deposit_address
         verify_atomic = str(
-            int((Decimal(offramp_order.token_amount) * (Decimal(10) ** offramp_order.token_decimals)).to_integral_value())
+            int((Decimal(offramp_order.token_amount) * (Decimal(10) ** offramp_order.token_decimals)).to_integral_value(rounding=ROUND_DOWN))
         )
 
     is_valid_tx = await verify_transfer(

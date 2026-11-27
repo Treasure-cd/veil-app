@@ -19,7 +19,7 @@ CHANNELS = ("whatsapp", "qr", "nfc", "web")
 def _ngn_expression():
     """Compute a payment's NGN value from its locked rate, never a current quote."""
     atomic = cast(PaymentIntent.amount_atomic, Numeric)
-    decimals = case((PaymentIntent.mint == settings.USDC_MINT, 6), else_=9)
+    decimals = case((PaymentIntent.mint.in_(settings.known_usdc_mints), 6), else_=9)
     token_amount = atomic / func.power(cast(literal(10), Numeric), decimals)
     locked_value = token_amount * cast(PaymentIntent.rate_ngn_per_token, Numeric)
     # Older rows can lack a rate; amount_ngn was also persisted with newer intents.
@@ -53,7 +53,7 @@ def _utc_iso(value: datetime) -> str:
 
 
 def _token_symbol(mint: str) -> str:
-    if mint == settings.USDC_MINT:
+    if mint in settings.known_usdc_mints:
         return "USDC"
     if mint == settings.SOL_MINT:
         return "SOL"

@@ -1,10 +1,16 @@
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import Field, computed_field,AliasChoices
+from pydantic import Field, computed_field, AliasChoices, model_validator
 from functools import lru_cache
 from typing import List
 import dotenv
 
 dotenv.load_dotenv()
+
+MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
+DEVNET_RPC_URL = "https://api.devnet.solana.com"
+MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
+NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112"
 
 
 class Settings(BaseSettings):
@@ -19,10 +25,39 @@ class Settings(BaseSettings):
     PORT: int = Field(default=8000)
     DATABASE_URL: str = Field(validation_alias=AliasChoices("DATABASE_URL_DEV", "DATABASE_URL"))
     SQL_ECHO: bool = Field(default=False)
-    SOLANA_RPC_URL: str = Field(default="https://api.devnet.solana.com")
-    SOLANA_NETWORK: str = Field(default="devnet")
-    USDC_MINT: str = Field(default="4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU")
-    SOL_MINT: str = Field(default="So11111111111111111111111111111111111111112")
+    SOLANA_NETWORK: str = Field(default="mainnet-beta")
+    SOLANA_RPC_URL: str = Field(default="")
+    USDC_MINT: str = Field(default="")
+    SOL_MINT: str = Field(default=NATIVE_SOL_MINT)
+
+    @model_validator(mode="after")
+    def _resolve_solana_network_defaults(self) -> "Settings":
+        raw = (self.SOLANA_NETWORK or "").strip().lower()
+        if raw in ("", "mainnet", "mainnet-beta"):
+            self.SOLANA_NETWORK = "mainnet-beta"
+            if not (self.SOLANA_RPC_URL or "").strip():
+                self.SOLANA_RPC_URL = MAINNET_RPC_URL
+            if not (self.USDC_MINT or "").strip():
+                self.USDC_MINT = MAINNET_USDC_MINT
+        elif raw == "devnet":
+            self.SOLANA_NETWORK = "devnet"
+            if not (self.SOLANA_RPC_URL or "").strip():
+                self.SOLANA_RPC_URL = DEVNET_RPC_URL
+            if not (self.USDC_MINT or "").strip():
+                self.USDC_MINT = DEVNET_USDC_MINT
+        else:
+            raise ValueError("SOLANA_NETWORK must be 'mainnet-beta', 'mainnet', or 'devnet'")
+        if not (self.SOL_MINT or "").strip():
+            self.SOL_MINT = NATIVE_SOL_MINT
+        return self
+
+    @property
+    def is_mainnet(self) -> bool:
+        return self.SOLANA_NETWORK == "mainnet-beta"
+
+    @property
+    def known_usdc_mints(self) -> tuple[str, ...]:
+        return tuple(dict.fromkeys((self.USDC_MINT, MAINNET_USDC_MINT, DEVNET_USDC_MINT)))
     RATE_NGN_PER_SOL: float | None = Field(default=None)
     RATE_NGN_PER_USDC: float | None = Field(default=None)
     

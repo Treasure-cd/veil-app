@@ -30,7 +30,7 @@ Configure these variables in the FastAPI Cloud app settings before deployment:
 - `DATABASE_URL_DEV`: Neon/Postgres connection URL. Use an asyncpg-compatible URL or standard `postgresql://` URL; the app normalizes the latter.
 - `JWT_SECRET`: random secret of at least 32 characters.
 - `ALLOWED_ORIGINS`: comma-separated frontend origins, including the deployed Veil frontend.
-- `SOLANA_NETWORK`, `SOLANA_RPC_URL`, `USDC_MINT`, and `SOL_MINT`: configure the API's Solana cluster and token mints together. Defaults are Devnet.
+- `SOLANA_NETWORK`, `SOLANA_RPC_URL`, `USDC_MINT`, and `SOL_MINT`: configure the API's Solana cluster and token mints. Defaults are Mainnet (`mainnet-beta`, `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); setting `SOLANA_NETWORK=devnet` automatically selects the Devnet RPC and Devnet USDC mint unless explicitly overridden.
 - `RATE_NGN_PER_SOL` and `RATE_NGN_PER_USDC`: optional fallback values if CoinGecko is unavailable.
 - `WASENDER_API_KEY`: optional, required only for the WhatsApp integration.
 

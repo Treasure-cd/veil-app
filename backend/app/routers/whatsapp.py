@@ -55,7 +55,7 @@ def _time_ago(value: datetime) -> str:
 
 
 def _token_details(intent: PaymentIntent) -> tuple[str, Decimal]:
-    token = "USDC" if intent.mint == settings.USDC_MINT else "SOL"
+    token = "USDC" if intent.mint in settings.known_usdc_mints else "SOL"
     decimals = 6 if token == "USDC" else 9
     amount = Decimal(intent.amount_atomic) / (Decimal(10) ** decimals)
     return token, amount

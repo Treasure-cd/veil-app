@@ -2,21 +2,24 @@ import { Plus, SignOut } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../auth/useAuth'
 import Logo from '../Logo'
-import { NETWORK, NETWORK_LABEL } from '../../lib/network'
+import { IS_MAINNET, NETWORK_LABEL, USDC_MINT } from '../../lib/network'
 import { ConnectWalletButton } from '../../auth/ConnectWalletButton'
 import { Button } from '../../components/ui/Button'
 import { useNavigate } from 'react-router'
 import { MoneyDisplayToggle } from '../ui/MoneyDisplayToggle'
 
 function NetworkBadge() {
-  const live = NETWORK === 'mainnet-beta'
+  const cluster = IS_MAINNET ? 'mainnet-beta' : 'devnet'
   return (
-    <span className="inline-flex h-9 items-center gap-2 rounded-pill border border-primary/10 bg-white px-3 text-sm font-medium">
+    <span
+      title={`Solana ${NETWORK_LABEL[cluster]} · USDC mint ${USDC_MINT}`}
+      className="inline-flex h-9 items-center gap-2 rounded-pill border border-primary/10 bg-white px-3 text-sm font-medium"
+    >
       <span
-        className={`size-2 rounded-full ${live ? 'bg-emerald-500' : 'bg-amber-500'}`}
+        className={`size-2 rounded-full ${IS_MAINNET ? 'bg-emerald-500' : 'bg-amber-500'}`}
         aria-hidden="true"
       />
-      <span>{NETWORK_LABEL[NETWORK]}</span>
+      <span>{NETWORK_LABEL[cluster]}</span>
     </span>
   )
 }

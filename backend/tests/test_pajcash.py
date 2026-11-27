@@ -25,7 +25,15 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlmodel import SQLModel
 
 import app.models  # noqa: F401
-from app.models.payment import MerchantBankAccount, PajOfframpOrder, PajOrderStatus, PaymentIntent
+from app.models.payment import (
+    FiatPayment,
+    FiatPaymentFlow,
+    FiatPaymentStatus,
+    MerchantBankAccount,
+    PajOfframpOrder,
+    PajOrderStatus,
+    PaymentIntent,
+)
 from app.models.user import User
 from app.services.pajcash import PAJ_SOLANA_TOKENS, PajCashService, verify_paj_webhook
 from core.config import settings
@@ -368,6 +376,246 @@ class PajCashRouterTests(unittest.IsolatedAsyncioTestCase):
             headers={"Authorization": f"Bearer {self.token}"},
         )
         self.assertEqual(del_res.status_code, 409)
+
+    async def test_multi_token_switch_and_targeted_reconcile(self) -> None:
+        async with self.session_factory() as db:
+            bank = MerchantBankAccount(
+                user_id=self.user.id,
+                paj_account_id="paj_bank_switch",
+                bank_code="100004",
+                bank_name="Opay",
+                account_number="8078617821",
+                account_name="TEST SWITCH",
+                solana_address=str(Pubkey.new_unique()),
+                is_default=True,
+            )
+            db.add(bank)
+            await db.commit()
+            await db.refresh(bank)
+
+        with patch(
+            "app.services.payment_intents.get_rates",
+            new=AsyncMock(return_value={"usdc": Decimal("1500"), "sol": Decimal("220000")}),
+        ):
+            intent_res = self.client.post(
+                "/v1/payments/intents",
+                json={
+                    "merchantRef": "INV-SWITCH-1",
+                    "token": "USDC",
+                    "amount_ngn": "5000",
+                    "recipientAddress": self.user.address,
+                    "settlementTarget": "fiat",
+                    "bankAccountId": str(bank.id),
+                },
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            self.assertEqual(intent_res.status_code, 200)
+            intent_id = intent_res.json()["id"]
+
+        created_orders: list[PajOfframpOrder] = []
+
+        async def fake_offramp(service, db_session, **kwargs):
+            idx = len(created_orders) + 1
+            order = PajOfframpOrder(
+                user_id=kwargs["user_id"],
+                payment_intent_id=kwargs["payment_intent_id"],
+                bank_account_id=kwargs["bank_account_id"],
+                paj_order_id=f"paj_switch_{idx}",
+                mint=kwargs["mint"],
+                token_symbol=kwargs["token_symbol"],
+                token_decimals=kwargs["token_decimals"],
+                deposit_address=str(Pubkey.new_unique()),
+                token_amount="0.035" if kwargs["token_symbol"] == "SOL" else "3.45",
+                fiat_amount="5000",
+                rate="1443.42",
+                bank_code=kwargs["bank_code"],
+                bank_name=kwargs["bank_name"],
+                account_number=kwargs["account_number"],
+                account_name=kwargs["account_name"],
+                status=PajOrderStatus.INIT.value,
+            )
+            db_session.add(order)
+            await db_session.commit()
+            await db_session.refresh(order)
+            created_orders.append(order)
+            return order
+
+        with patch("app.routers.payments.PajCashService.create_offramp_order", new=fake_offramp):
+            sol_1 = self.client.post(f"/v1/payments/intents/{intent_id}/paj-offramp", json={"token": "SOL"})
+            self.assertEqual(sol_1.status_code, 200)
+            usdt_1 = self.client.post(f"/v1/payments/intents/{intent_id}/paj-offramp", json={"token": "USDT"})
+            self.assertEqual(usdt_1.status_code, 200)
+            sol_2 = self.client.post(f"/v1/payments/intents/{intent_id}/paj-offramp", json={"token": "SOL"})
+            self.assertEqual(sol_2.status_code, 200)
+            self.assertEqual(sol_2.json()["id"], sol_1.json()["id"])
+
+        # Reusing SOL bumped its updated_at so GET returns SOL as active INIT order
+        current = self.client.get(f"/v1/payments/intents/{intent_id}")
+        self.assertEqual(current.status_code, 200)
+        self.assertEqual(current.json()["pajOfframp"]["id"], sol_1.json()["id"])
+
+        # Explicit orderId reconciliation can settle an earlier non-latest order (USDT) cleanly
+        usdt_id = usdt_1.json()["id"]
+
+        async def fake_reconcile(service, db_session, order):
+            order.status = PajOrderStatus.COMPLETED.value
+            db_session.add(order)
+            await db_session.commit()
+            await db_session.refresh(order)
+            return order
+
+        with patch("app.routers.payments.PajCashService.reconcile_offramp_order", new=fake_reconcile):
+            rec = self.client.post(
+                f"/v1/payments/intents/{intent_id}/paj-offramp/reconcile",
+                json={"orderId": usdt_id},
+            )
+            self.assertEqual(rec.status_code, 200)
+            self.assertEqual(rec.json()["id"], usdt_id)
+            self.assertEqual(rec.json()["status"], PajOrderStatus.COMPLETED.value)
+
+        # GET now prioritizes the COMPLETED USDT order and marks the intent funded
+        settled = self.client.get(f"/v1/payments/intents/{intent_id}")
+        self.assertEqual(settled.status_code, 200)
+        self.assertEqual(settled.json()["status"], "funded")
+        self.assertEqual(settled.json()["pajOfframp"]["id"], usdt_id)
+
+    async def test_fiat_settled_intent_paid_by_bank_transfer_settles_to_merchant_bank(self) -> None:
+        async with self.session_factory() as db:
+            bank = MerchantBankAccount(
+                user_id=self.user.id,
+                paj_account_id="paj_bank_fiat",
+                bank_code="100004",
+                bank_name="Opay",
+                account_number="8078617821",
+                account_name="SETTLE MERCHANT",
+                solana_address=str(Pubkey.new_unique()),
+                is_default=True,
+            )
+            db.add(bank)
+            await db.commit()
+            await db.refresh(bank)
+
+        with patch(
+            "app.services.payment_intents.get_rates",
+            new=AsyncMock(return_value={"usdc": Decimal("1500"), "sol": Decimal("220000")}),
+        ):
+            intent_res = self.client.post(
+                "/v1/payments/intents",
+                json={
+                    "merchantRef": "INV-BANK-TO-FIAT-1",
+                    "token": "USDC",
+                    "amount_ngn": "4500",
+                    "recipientAddress": self.user.address,
+                    "settlementTarget": "fiat",
+                    "bankAccountId": str(bank.id),
+                },
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            self.assertEqual(intent_res.status_code, 200)
+            intent_id = intent_res.json()["id"]
+
+        checkout_id = str(uuid4())
+
+        async def fake_checkout(service, db_session, **kwargs):
+            row = FiatPayment(
+                user_id=kwargs["user_id"],
+                payment_intent_id=kwargs["payment_intent_id"],
+                flow=FiatPaymentFlow.CHECKOUT.value,
+                reference=kwargs["reference"],
+                idempotency_key=str(uuid4()),
+                fossapay_id=checkout_id,
+                amount="4500.00",
+                fee="50.00",
+                amount_payable="4550.00",
+                settlement_amount="4500.00",
+                fee_bearer=kwargs["fee_bearer"],
+                account_type="static_virtual",
+                bank_name="FossaPay Bank",
+                account_name="Veil Checkout",
+                account_number="9988776655",
+                status=FiatPaymentStatus.PENDING.value,
+            )
+            db_session.add(row)
+            await db_session.commit()
+            await db_session.refresh(row)
+            return row
+
+        payout_calls: list[dict] = []
+
+        async def fake_payout(service, db_session, **kwargs):
+            payout_calls.append(kwargs)
+            row = FiatPayment(
+                user_id=kwargs["user_id"],
+                payment_intent_id=kwargs["payment_intent_id"],
+                flow=FiatPaymentFlow.PAYOUT.value,
+                reference=kwargs["reference"],
+                idempotency_key=kwargs["idempotency_key"],
+                fossapay_id=str(uuid4()),
+                amount=str(kwargs["amount_ngn"]),
+                bank_code=kwargs["bank_code"],
+                bank_name=kwargs["bank_name"],
+                account_name=kwargs["account_name"],
+                account_number=kwargs["account_number"],
+                status=FiatPaymentStatus.PROCESSING.value,
+            )
+            db_session.add(row)
+            await db_session.commit()
+            await db_session.refresh(row)
+            return row
+
+        with patch("app.routers.payments.FossaPayService.create_checkout", new=fake_checkout):
+            chk = self.client.post(f"/v1/payments/intents/{intent_id}/fiat-checkout")
+            self.assertEqual(chk.status_code, 200)
+            chk_ref = chk.json()["reference"]
+
+        data = {
+            "checkoutId": checkout_id,
+            "transactionId": str(uuid4()),
+            "reference": chk_ref,
+            "status": "completed",
+            "amount": "4500.00",
+            "fee": "50.00",
+            "amountPayable": "4550.00",
+            "settlementAmount": "4500.00",
+        }
+        sig = hmac.new(
+            b"whsec_test_secret",
+            json.dumps(data, separators=(",", ":"), ensure_ascii=False).encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+
+        with (
+            patch.object(settings, "FOSSAPAY_WEBHOOK_SECRET", "whsec_test_secret"),
+            patch("app.routers.payments.FossaPayService.create_payout", new=fake_payout),
+        ):
+            wh1 = self.client.post(
+                "/v1/webhook/fossapay",
+                json={"eventId": "evt_settle_1", "eventType": "checkout.completed", "data": data},
+                headers={"x-fossapay-Signature": sig},
+            )
+            self.assertEqual(wh1.status_code, 200)
+            wh2 = self.client.post(
+                "/v1/webhook/fossapay",
+                json={"eventId": "evt_settle_1", "eventType": "checkout.completed", "data": data},
+                headers={"x-fossapay-Signature": sig},
+            )
+            self.assertEqual(wh2.status_code, 200)
+
+        # Settlement payout runs once only for 4500 NGN to the merchant's linked OPay account
+        self.assertEqual(len(payout_calls), 1)
+        self.assertEqual(payout_calls[0]["amount_ngn"], 4500)
+        self.assertEqual(payout_calls[0]["account_number"], "8078617821")
+        self.assertEqual(payout_calls[0]["bank_code"], "100004")
+
+        public_view = self.client.get(f"/v1/payments/intents/{intent_id}").json()
+        self.assertEqual(public_view["status"], "funded")
+        self.assertEqual(public_view["fiatPayout"], {"status": "processing", "bankName": "Opay"})
+
+        owner_view = self.client.get(
+            f"/v1/payments/intents/{intent_id}",
+            headers={"Authorization": f"Bearer {self.token}"},
+        ).json()
+        self.assertEqual(owner_view["fiatPayout"]["accountNumber"], "8078617821")
 
 
 if __name__ == "__main__":

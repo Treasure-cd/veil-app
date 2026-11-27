@@ -12,7 +12,7 @@ import { QRCodeSVG } from 'qrcode.react'
 import { useAuth } from '../auth/useAuth'
 import { api } from '../services/api'
 import { truncateAddress } from '../lib/format'
-import { NETWORK, NETWORK_LABEL } from '../lib/network'
+import { IS_MAINNET, NETWORK, NETWORK_LABEL, USDC_MINT } from '../lib/network'
 import { Money } from '../components/ui/Money'
 import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
 import { BankTransferCard } from '../components/payments/BankTransferCard'
@@ -351,7 +351,11 @@ export default function Payments() {
                 )}
                 <div className="mt-3 flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-white px-3 py-2">
                   <div className="min-w-0">
-                    <p className="text-[11px] uppercase tracking-wider text-foreground/50">Permanent Solana Mainnet deposit address</p>
+                    <p className="text-[11px] uppercase tracking-wider text-foreground/50">
+                      {IS_MAINNET
+                        ? 'Permanent Solana Mainnet deposit address'
+                        : 'Permanent Paj Cash deposit address (Solana Mainnet)'}
+                    </p>
                     <p className="truncate font-mono text-xs text-primary">{generatedPayment.recipientAddress}</p>
                   </div>
                   <Button
@@ -434,18 +438,21 @@ export default function Payments() {
                 </div>
                 <div className="space-y-1.5">
                   <span className="text-sm font-medium">Rails</span>
-                  <div className="flex h-11 items-center rounded-card border border-primary/15 bg-primary/5 px-3 text-sm font-medium text-primary">
+                  <div
+                    title={`Active USDC contract: ${USDC_MINT}`}
+                    className="flex h-11 items-center rounded-card border border-primary/15 bg-primary/5 px-3 text-sm font-medium text-primary"
+                  >
                     {settlementTarget === 'fiat'
-                      ? `${includeFiatCheckout ? 'Bank Transfer · ' : ''}Multi-token Solana → NGN`
+                      ? `${includeFiatCheckout ? 'Fiat Bank Transfer · ' : ''}Multi-token Solana → NGN`
                       : includeFiatCheckout
-                        ? `NGN Bank Transfer · USDC (${NETWORK_LABEL[NETWORK]})`
+                        ? `Fiat Bank Transfer · USDC (${NETWORK_LABEL[NETWORK]})`
                         : `NGN → USDC · ${NETWORK_LABEL[NETWORK]}`}
                   </div>
                 </div>
               </div>
 
               <div className="border-t border-primary/10 pt-5">
-                <p className="text-sm font-medium">Payment channels</p>
+                <p className="text-sm font-medium">Buyer payment options</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
                   <button
                     type="button"
@@ -458,10 +465,10 @@ export default function Payments() {
                     }`}
                   >
                     <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-                      <Bank size={17} weight="fill" /> Bank transfer + USDC
+                      <Bank size={17} weight="fill" /> Fiat (Bank transfer) + Crypto
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-foreground/60">
-                      Generates a 30-minute Nigerian virtual bank account alongside Solana USDC checkout.
+                      Buyers can pay by Nigerian bank transfer or a Solana wallet on the checkout link.
                     </p>
                   </button>
                   <button
@@ -475,10 +482,10 @@ export default function Payments() {
                     }`}
                   >
                     <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-                      <GlobeHemisphereWest size={17} /> Solana USDC only
+                      <GlobeHemisphereWest size={17} /> Crypto wallet only
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-foreground/60">
-                      On-chain USDC checkout only. Supports kobo decimals.
+                      On-chain crypto checkout only (whole Naira links can still offer bank transfer later). Supports kobo decimals.
                     </p>
                   </button>
                 </div>
@@ -544,7 +551,7 @@ export default function Payments() {
                       <Bank size={17} weight="fill" /> Receive Fiat / NGN (Paj Cash)
                     </p>
                     <p className="mt-1 text-xs leading-relaxed text-foreground/60">
-                      Payers can send USDC, SOL, USDT, or USDG and Paj Cash settles NGN directly to your Nigerian bank account.
+                      Payers can send USDC, SOL, USDT, USDG, or bank transfer; crypto routes through Paj Cash to settle NGN directly to your Nigerian bank account.
                     </p>
                   </button>
                 </div>
@@ -586,7 +593,10 @@ export default function Payments() {
                             <span className="font-mono text-primary">
                               {truncateAddress(selectedBankAccount.solanaAddress, 6)}
                             </span>
-                            {' · '}Solana Mainnet tokens deposited here settle to {selectedBankAccount.bankName}.
+                            {' · '}
+                            {IS_MAINNET
+                              ? `Solana Mainnet tokens deposited here settle to ${selectedBankAccount.bankName}.`
+                              : `App is on ${NETWORK_LABEL[NETWORK]}; Paj Cash settles Mainnet deposits to ${selectedBankAccount.bankName}.`}
                           </p>
                         )}
                         {showAddBankForm && (
