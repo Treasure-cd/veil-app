@@ -57,7 +57,7 @@ async def create_demo_link(
         phone = normalize_phone_number(phone_value)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail="Enter a valid phone number.") from exc
-    destination = join_url()
+    destination = await join_url()
 
     personal_wallet = merchant is not None
     source = "demo_wallet" if personal_wallet else "demo"

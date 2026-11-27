@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { CheckCircle, Clock, WhatsappLogo, X } from '@phosphor-icons/react'
+import { useSearchParams } from 'react-router'
+import { CheckCircle, Clock, Copy, WhatsappLogo, X } from '@phosphor-icons/react'
 import { api } from '../services/api'
 import { Button } from '../components/ui/Button'
 import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
@@ -12,8 +13,22 @@ interface WhatsAppStatus {
 interface LinkCodeResponse {
   code: string
   expires_at: string
-  join_url: string
-  link_url: string
+  join_url: string | null
+  link_url: string | null
+}
+
+interface SetupPreviewResponse {
+  phone_masked: string
+  expires_at: string
+  already_linked_to_current_user: boolean
+  already_linked_to_other_account: boolean
+}
+
+interface CompleteSetupResponse {
+  ok: boolean
+  phone_masked: string
+  display_name: string
+  notified_whatsapp: boolean
 }
 
 function formatCountdown(seconds: number) {
@@ -24,6 +39,9 @@ function formatCountdown(seconds: number) {
 
 function Settings() {
   const dialogRef = useRef<HTMLDialogElement>(null)
+  const [searchParams, setSearchParams] = useSearchParams()
+  const setupToken = searchParams.get('whatsapp_setup')?.trim() || null
+
   const [status, setStatus] = useState<WhatsAppStatus | null>(null)
   const [statusLoading, setStatusLoading] = useState(true)
   const [statusError, setStatusError] = useState<string | null>(null)
@@ -33,7 +51,22 @@ function Settings() {
   const [linkLoading, setLinkLoading] = useState(false)
   const [unlinking, setUnlinking] = useState(false)
   const [linkError, setLinkError] = useState<string | null>(null)
+  const [copiedCommand, setCopiedCommand] = useState(false)
   const [now, setNow] = useState(Date.now())
+
+  const [setupLoading, setSetupLoading] = useState(false)
+  const [setupPreview, setSetupPreview] = useState<SetupPreviewResponse | null>(null)
+  const [setupError, setSetupError] = useState<string | null>(null)
+  const [completingSetup, setCompletingSetup] = useState(false)
+  const [setupSuccess, setSetupSuccess] = useState<CompleteSetupResponse | null>(null)
+
+  const clearSetupParam = useCallback(() => {
+    setSearchParams((prev) => {
+      const next = new URLSearchParams(prev)
+      next.delete('whatsapp_setup')
+      return next
+    }, { replace: true })
+  }, [setSearchParams])
 
   const refreshStatus = useCallback(async () => {
     try {
@@ -53,6 +86,35 @@ function Settings() {
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
+
+  useEffect(() => {
+    if (!setupToken) {
+      setSetupLoading(false)
+      setSetupPreview(null)
+      setSetupError(null)
+      return
+    }
+    let cancelled = false
+    setSetupLoading(true)
+    setSetupPreview(null)
+    setSetupError(null)
+    setSetupSuccess(null)
+    api<SetupPreviewResponse>(`/v1/whatsapp/setup/${encodeURIComponent(setupToken)}`)
+      .then((preview) => {
+        if (!cancelled) setSetupPreview(preview)
+      })
+      .catch((error) => {
+        if (!cancelled) {
+          setSetupError(error instanceof Error ? error.message : 'Could not load WhatsApp setup link.')
+        }
+      })
+      .finally(() => {
+        if (!cancelled) setSetupLoading(false)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [setupToken])
 
   useEffect(() => {
     if (!linkDialogOpen) return
@@ -89,6 +151,7 @@ function Settings() {
   async function issueLinkCode() {
     setLinkLoading(true)
     setLinkError(null)
+    setCopiedCommand(false)
     try {
       const response = await api<LinkCodeResponse>('/v1/whatsapp/link-code', { method: 'POST' })
       setLinkInfo(response)
@@ -102,9 +165,40 @@ function Settings() {
     }
   }
 
+  async function copyLinkCommand(code: string) {
+    try {
+      await navigator.clipboard.writeText(`link ${code}`)
+      setCopiedCommand(true)
+      window.setTimeout(() => setCopiedCommand(false), 1800)
+    } catch {
+      // Clipboard may be unavailable.
+    }
+  }
+
+  async function completeSetup() {
+    if (!setupToken) return
+    setCompletingSetup(true)
+    setSetupError(null)
+    try {
+      const response = await api<CompleteSetupResponse>('/v1/whatsapp/setup/complete', {
+        method: 'POST',
+        body: JSON.stringify({ token: setupToken }),
+      })
+      setSetupSuccess(response)
+      setSetupPreview(null)
+      clearSetupParam()
+      await refreshStatus()
+    } catch (error) {
+      setSetupError(error instanceof Error ? error.message : 'Could not connect WhatsApp.')
+    } finally {
+      setCompletingSetup(false)
+    }
+  }
+
   async function unlinkWhatsApp() {
     setUnlinking(true)
     setLinkError(null)
+    setSetupSuccess(null)
     try {
       await api<{ ok: boolean }>('/v1/whatsapp/link', { method: 'DELETE' })
       await refreshStatus()
@@ -151,6 +245,72 @@ function Settings() {
             )}
           </div>
         </div>
+
+        {setupToken && (
+          <div className="mt-4 rounded-card border border-primary/15 bg-background/60 p-4">
+            {setupLoading ? (
+              <p className="text-sm text-foreground/70">Checking your WhatsApp setup link…</p>
+            ) : setupError ? (
+              <div className="space-y-3">
+                <p role="alert" className="text-sm text-red-700 dark:text-red-300">{setupError}</p>
+                <Button size="sm" variant="secondary" onClick={clearSetupParam}>
+                  Dismiss
+                </Button>
+              </div>
+            ) : setupPreview ? (
+              <div className="space-y-3">
+                <div>
+                  <p className="text-sm font-semibold text-primary">Confirm WhatsApp connection</p>
+                  <p className="mt-1 text-sm text-foreground/70">
+                    Link WhatsApp number{' '}
+                    <span className="font-mono font-medium text-primary">{setupPreview.phone_masked}</span>{' '}
+                    to this Veil account so messages from it create payment links for your wallet.
+                  </p>
+                  {setupPreview.already_linked_to_other_account && (
+                    <p className="mt-2 text-xs text-foreground/60">
+                      This number is currently linked to a different Veil account and will be moved here.
+                    </p>
+                  )}
+                  {setupPreview.already_linked_to_current_user && (
+                    <p className="mt-2 text-xs text-foreground/60">
+                      This number is already linked to your account.
+                    </p>
+                  )}
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <Button size="sm" loading={completingSetup} onClick={() => void completeSetup()}>
+                    Confirm &amp; link
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    disabled={completingSetup}
+                    onClick={() => {
+                      setSetupPreview(null)
+                      clearSetupParam()
+                    }}
+                  >
+                    Cancel
+                  </Button>
+                </div>
+              </div>
+            ) : null}
+          </div>
+        )}
+
+        {setupSuccess && !setupToken && (
+          <div className="mt-4 rounded-card bg-emerald-50 p-4 text-sm text-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300" role="status">
+            <p className="flex items-center gap-2 font-medium">
+              <CheckCircle size={18} weight="fill" aria-hidden="true" />
+              WhatsApp connected · {setupSuccess.phone_masked}
+            </p>
+            <p className="mt-1 text-xs opacity-90">
+              {setupSuccess.notified_whatsapp
+                ? 'We sent a confirmation on WhatsApp — you can return to your chat now.'
+                : 'You can return to your WhatsApp chat now.'}
+            </p>
+          </div>
+        )}
 
         {statusError && (
           <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card bg-red-50 px-4 py-3 dark:bg-red-950/45">
@@ -210,18 +370,29 @@ function Settings() {
           ) : linkInfo ? (
             <div className="mt-6 space-y-5">
               <div className="rounded-card border border-primary/10 p-4">
-                <p className="text-sm font-semibold text-primary">1. Open Veil on WhatsApp</p>
-                <p className="mt-1 text-sm leading-relaxed text-foreground/60">
-                  Start a chat with Veil's WhatsApp business number.
-                </p>
-                <a
-                  href={linkInfo.join_url}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary-action px-4 text-sm font-medium text-white hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                >
-                  Open WhatsApp
-                </a>
+                {linkInfo.join_url ? (
+                  <>
+                    <p className="text-sm font-semibold text-primary">1. Open Veil on WhatsApp</p>
+                    <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+                      Start a chat with Veil's WhatsApp business number.
+                    </p>
+                    <a
+                      href={linkInfo.join_url}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary-action px-4 text-sm font-medium text-white hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                    >
+                      Open WhatsApp
+                    </a>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-sm font-semibold text-primary">1. Open your Veil chat on WhatsApp</p>
+                    <p className="mt-1 text-sm leading-relaxed text-foreground/60">
+                      Open the chat where you messaged Veil on WhatsApp to send the code below.
+                    </p>
+                  </>
+                )}
               </div>
 
               <div className="rounded-card border border-primary/10 p-4">
@@ -233,20 +404,36 @@ function Settings() {
                     </span>
                   )}
                 </div>
-                <p className="mt-1 text-sm text-foreground/60">Open WhatsApp and send this code to the bot.</p>
+                <p className="mt-1 text-sm text-foreground/60">
+                  Send <span className="font-mono font-medium text-primary">link {linkInfo.code}</span> to the bot on WhatsApp.
+                </p>
                 {secondsRemaining > 0 ? (
                   <>
                     <p className="my-4 break-all text-center font-mono text-3xl font-semibold tracking-[0.18em] text-primary sm:text-4xl">
                       {linkInfo.code}
                     </p>
-                    <a
-                      href={linkInfo.link_url}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex h-10 w-full items-center justify-center rounded-sm border border-primary/20 bg-surface px-4 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
-                    >
-                      Send link code
-                    </a>
+                    <div className="flex flex-col gap-2">
+                      {linkInfo.link_url && (
+                        <a
+                          href={linkInfo.link_url}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex h-10 w-full items-center justify-center rounded-sm border border-primary/20 bg-surface px-4 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                        >
+                          Send link code
+                        </a>
+                      )}
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        size="sm"
+                        fullWidth
+                        leftIcon={copiedCommand ? <CheckCircle size={15} weight="fill" /> : <Copy size={15} />}
+                        onClick={() => void copyLinkCommand(linkInfo.code)}
+                      >
+                        {copiedCommand ? 'Copied command' : `Copy "link ${linkInfo.code}"`}
+                      </Button>
+                    </div>
                   </>
                 ) : (
                   <div className="mt-4">

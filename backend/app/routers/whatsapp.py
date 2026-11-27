@@ -20,7 +20,7 @@ from app.models.whatsapp import WhatsAppLink, WhatsAppMessage, WhatsAppSession
 from app.services.payment_intents import create_payment_intent
 from app.services.phone_numbers import normalize_phone_number
 from app.services.whatsapp_ai_parser import parse_message_with_gemini
-from app.services.whatsapp_linking import consume_link_code
+from app.services.whatsapp_linking import consume_link_code, create_setup_token
 from app.services.whatsapp_parser import parse_message
 from core.config import settings
 from core.session import get_session
@@ -149,7 +149,7 @@ async def _build_inbound_reply(
                 phone_e164=phone,
             )
             if result == "linked":
-                return f"Your WhatsApp is now linked to {display_name}."
+                return f"Your WhatsApp is now linked to {display_name}. {MENU}"
             if result == "expired":
                 return "That link code has expired. Generate a new code in Veil Settings → WhatsApp."
             if result == "used":
@@ -160,9 +160,11 @@ async def _build_inbound_reply(
             select(WhatsAppLink).where(WhatsAppLink.phone_e164 == phone)
         )).scalars().first()
         if not linked:
+            setup_token = await create_setup_token(db, phone)
+            setup_url = f"{settings.FRONTEND_URL.rstrip('/')}/settings?whatsapp_setup={setup_token}"
             return (
-                "Hi, I'm Veil. Link your account in Settings → WhatsApp to get started. "
-                f"{settings.FRONTEND_URL.rstrip('/')}/settings"
+                "Hi, I'm Veil. Open this link to connect your WhatsApp to your Veil account:\n"
+                f"{setup_url}"
             )
 
         user = await db.get(User, linked.merchant_id)
