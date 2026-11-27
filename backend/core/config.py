@@ -89,6 +89,11 @@ class Settings(BaseSettings):
     PAJCASH_APIKEY: str | None = Field(default=None)
     PAJCASH_BASE_URL: str = Field(default="https://api.paj.cash")
     PAJCASH_WEBHOOK_SECRET: str | None = Field(default=None)
+    GEMINI_API_KEY: str | None = Field(
+        default=None,
+        validation_alias=AliasChoices("GEMINI_API_KEY", "GEMINI_APIKEY"),
+    )
+    GEMINI_MODEL: str = Field(default="gemini-3.8-flash")
 
     @field_validator("WHATSAPP_PAYMENT_METHODS", mode="before")
     @classmethod
