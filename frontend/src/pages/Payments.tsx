@@ -45,6 +45,8 @@ interface Rates {
 
 type PaymentsSection = 'request' | 'payouts'
 
+const PAJ_MIN_USDC = 0.4
+
 export default function Payments() {
   const { user } = useAuth()
   const wallet = useWallet()
@@ -149,6 +151,27 @@ export default function Payments() {
       : null
   }, [amount, rate])
 
+  const effectivePajRate = useMemo(() => {
+    if (pajRate && Number.isFinite(pajRate) && pajRate > 0) return pajRate
+    const fallback = rate ? Number(rate) : NaN
+    return Number.isFinite(fallback) && fallback > 0 ? fallback : null
+  }, [pajRate, rate])
+
+  const pajMinNgn = useMemo(() => {
+    if (!effectivePajRate) return null
+    return Math.ceil(PAJ_MIN_USDC * effectivePajRate)
+  }, [effectivePajRate])
+
+  const parsedAmount = Number(amount)
+  const belowPajMin = Boolean(
+    settlementTarget === 'fiat' &&
+      pajMinNgn !== null &&
+      amount.trim() !== '' &&
+      Number.isFinite(parsedAmount) &&
+      parsedAmount >= 0 &&
+      parsedAmount < pajMinNgn,
+  )
+
   async function handleGenerate() {
     const includeBankTransfer = includeFiatCheckout &&
       !(settlementTarget === 'crypto' && receiveMode === 'private')
@@ -159,6 +182,12 @@ export default function Payments() {
     }
     if (includeBankTransfer && (!/^\d+$/.test(amount.trim()) || Number(amount) < 1)) {
       setError('Bank transfer checkouts require a whole-naira amount (no kobo decimals) of at least ₦1.')
+      return
+    }
+    if (settlementTarget === 'fiat' && pajMinNgn !== null && Number(amount) < pajMinNgn) {
+      setError(
+        `Paj Cash NGN settlement requires at least ₦${pajMinNgn.toLocaleString('en-NG')} (0.40 USDC equivalent).`,
+      )
       return
     }
     if (!rate) {
@@ -462,14 +491,37 @@ export default function Payments() {
                   <input
                     id="payment-amount"
                     type="number"
-                    min="0"
+                    min={settlementTarget === 'fiat' && pajMinNgn ? String(pajMinNgn) : '0'}
                     step={includeFiatCheckout && receiveMode !== 'private' ? '1' : 'any'}
                     inputMode={includeFiatCheckout && receiveMode !== 'private' ? 'numeric' : 'decimal'}
-                    placeholder={includeFiatCheckout && receiveMode !== 'private' ? '5000' : '0.00'}
+                    placeholder={
+                      settlementTarget === 'fiat' && pajMinNgn
+                        ? String(Math.max(5000, pajMinNgn))
+                        : includeFiatCheckout && receiveMode !== 'private'
+                          ? '5000'
+                          : '0.00'
+                    }
+                    aria-invalid={belowPajMin ? true : undefined}
+                    aria-describedby={settlementTarget === 'fiat' && pajMinNgn !== null ? 'payment-amount-paj-hint' : undefined}
                     value={amount}
                     onChange={(event) => setAmount(event.target.value)}
-                    className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 font-mono text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                    className={`h-11 w-full rounded-card border bg-background px-3 font-mono text-sm outline-none transition focus:ring-2 ${
+                      belowPajMin
+                        ? 'border-amber-500/60 focus:border-amber-600 focus:ring-amber-500/15'
+                        : 'border-primary/15 focus:border-primary/40 focus:ring-primary/10'
+                    }`}
                   />
+                  {settlementTarget === 'fiat' && pajMinNgn !== null && (
+                    belowPajMin ? (
+                      <p id="payment-amount-paj-hint" role="alert" className="text-xs font-medium text-amber-700 dark:text-amber-300">
+                        Minimum for Paj Cash NGN settlement is ₦{pajMinNgn.toLocaleString('en-NG')} (0.40 USDC equivalent).
+                      </p>
+                    ) : (
+                      <p id="payment-amount-paj-hint" className="text-xs text-foreground/55">
+                        Min. ₦{pajMinNgn.toLocaleString('en-NG')} (0.40 USDC) for Paj Cash NGN settlement.
+                      </p>
+                    )
+                  )}
                 </div>
                 <div className="space-y-1.5">
                   <span className="text-sm font-medium">Rails</span>
