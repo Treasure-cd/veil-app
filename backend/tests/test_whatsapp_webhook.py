@@ -567,6 +567,188 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(preview.json()["already_linked_to_other_account"])
         self.assertFalse(preview.json()["already_linked_to_current_user"])
 
+    async def test_regex_matched_message_skips_gemini_fallback(self) -> None:
+        payload = self._payload("5000 for lunch", "wamid-regex-fastpath")
+        intent = self._payment_intent(receive_mode="public", allow_fiat_checkout=True)
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()),
+            patch("app.routers.whatsapp.create_payment_intent", new=AsyncMock(return_value=intent)),
+            patch(
+                "app.routers.whatsapp.parse_message_with_gemini",
+                new=AsyncMock(),
+            ) as gemini_parse,
+        ):
+            response = self._post_signed_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+        gemini_parse.assert_not_awaited()
+
+    async def test_fallback_message_uses_gemini_to_create_checkout_link(self) -> None:
+        payload = self._payload(
+            "abeg bill Chidi fifteen thousand naira for sneakers private crypto only",
+            "wamid-gemini-create-link",
+        )
+        intent = self._payment_intent(receive_mode="private", allow_fiat_checkout=False)
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
+            patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply,
+            patch(
+                "app.routers.whatsapp.parse_message_with_gemini",
+                new=AsyncMock(
+                    return_value={
+                        "intent": "create_link",
+                        "code": None,
+                        "amount_ngn": Decimal("15000"),
+                        "memo": "Chidi sneakers",
+                        "amount_error": None,
+                        "receive_mode": "private",
+                        "crypto_only": True,
+                    }
+                ),
+            ) as gemini_parse,
+            patch(
+                "app.routers.whatsapp.create_payment_intent",
+                new=AsyncMock(return_value=intent),
+            ) as create_intent,
+        ):
+            response = self._post_signed_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+        gemini_parse.assert_awaited_once_with(
+            "abeg bill Chidi fifteen thousand naira for sneakers private crypto only",
+            awaiting_amount=False,
+        )
+        create_intent.assert_awaited_once()
+        self.assertEqual(create_intent.await_args.kwargs["amount_ngn"], Decimal("15000"))
+        self.assertEqual(create_intent.await_args.kwargs["memo"], "Chidi sneakers")
+        self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "private")
+        self.assertFalse(create_intent.await_args.kwargs["allow_fiat_checkout"])
+        self.assertIn("private USDC only", send_reply.await_args.kwargs["body"])
+
+    async def test_fallback_message_uses_gemini_for_recent_payments_and_awaiting_amount(self) -> None:
+        recent_payload = self._payload(
+            "how much people don pay me recently?",
+            "wamid-gemini-recent",
+        )
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply,
+            patch(
+                "app.routers.whatsapp.parse_message_with_gemini",
+                new=AsyncMock(
+                    return_value={
+                        "intent": "recent_payments",
+                        "code": None,
+                        "amount_ngn": None,
+                        "memo": None,
+                        "amount_error": None,
+                        "receive_mode": None,
+                        "crypto_only": False,
+                    }
+                ),
+            ),
+        ):
+            recent_resp = self._post_signed_payload(recent_payload)
+
+        self.assertEqual(recent_resp.status_code, 200)
+        self.assertIn("No payments yet.", send_reply.await_args.kwargs["body"])
+
+        ask_payload = self._payload("link for generator", "wamid-gemini-draft")
+        amount_payload = self._payload("twenty thousand naira", "wamid-gemini-amount")
+        intent = self._payment_intent(receive_mode="public", allow_fiat_checkout=True)
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply2,
+            patch(
+                "app.routers.whatsapp.parse_message_with_gemini",
+                new=AsyncMock(
+                    side_effect=[
+                        {
+                            "intent": "create_link",
+                            "code": None,
+                            "amount_ngn": None,
+                            "memo": "generator",
+                            "amount_error": None,
+                            "receive_mode": None,
+                            "crypto_only": False,
+                        },
+                        {
+                            "intent": "create_link",
+                            "code": None,
+                            "amount_ngn": Decimal("20000"),
+                            "memo": None,
+                            "amount_error": None,
+                            "receive_mode": None,
+                            "crypto_only": False,
+                        },
+                    ]
+                ),
+            ) as gemini_amount,
+            patch(
+                "app.routers.whatsapp.create_payment_intent",
+                new=AsyncMock(return_value=intent),
+            ) as create_intent,
+        ):
+            ask_resp = self._post_signed_payload(ask_payload)
+            amount_resp = self._post_signed_payload(amount_payload)
+
+        self.assertEqual(ask_resp.status_code, 200)
+        self.assertEqual(amount_resp.status_code, 200)
+        self.assertEqual(gemini_amount.await_count, 2)
+        self.assertEqual(
+            gemini_amount.await_args_list[1].args,
+            ("twenty thousand naira",),
+        )
+        self.assertEqual(gemini_amount.await_args_list[1].kwargs, {"awaiting_amount": True})
+        self.assertEqual(create_intent.await_args.kwargs["amount_ngn"], Decimal("20000"))
+        self.assertEqual(create_intent.await_args.kwargs["memo"], "generator")
+        self.assertIn("Checkout link:", send_reply2.await_args.kwargs["body"])
+
+    async def test_word_amount_with_link_keyword_uses_gemini(self) -> None:
+        payload = self._payload(
+            "Abeg collect twenty five thousand five hundred naira for shoes private crypto only",
+            "wamid-gemini-word-amount-keyword",
+        )
+        intent = self._payment_intent(receive_mode="private", allow_fiat_checkout=False)
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply,
+            patch(
+                "app.routers.whatsapp.parse_message_with_gemini",
+                new=AsyncMock(
+                    return_value={
+                        "intent": "create_link",
+                        "code": None,
+                        "amount_ngn": Decimal("25500"),
+                        "memo": "shoes",
+                        "amount_error": None,
+                        "receive_mode": None,
+                        "crypto_only": False,
+                    }
+                ),
+            ) as gemini_parse,
+            patch(
+                "app.routers.whatsapp.create_payment_intent",
+                new=AsyncMock(return_value=intent),
+            ) as create_intent,
+        ):
+            resp = self._post_signed_payload(payload)
+
+        self.assertEqual(resp.status_code, 200)
+        gemini_parse.assert_awaited_once()
+        self.assertEqual(create_intent.await_args.kwargs["amount_ngn"], Decimal("25500"))
+        self.assertEqual(create_intent.await_args.kwargs["memo"], "shoes")
+        self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "private")
+        self.assertFalse(create_intent.await_args.kwargs["allow_fiat_checkout"])
+        self.assertIn("private USDC only", send_reply.await_args.kwargs["body"])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -17,7 +17,7 @@ from app.services.whatsapp_parser import (
 )
 from core.config import settings
 
-_GEMINI_TIMEOUT_SECONDS = 6.0
+_GEMINI_TIMEOUT_SECONDS = 8.0
 _clients_by_key: dict[str, genai.Client] = {}
 
 _SYSTEM_INSTRUCTION = (
@@ -121,7 +121,7 @@ async def parse_message_with_gemini(
     if not api_key or not cleaned:
         return _fallback_message()
 
-    model_name = (settings.GEMINI_MODEL or "gemini-3.8-flash").strip() or "gemini-3.8-flash"
+    model_name = (settings.GEMINI_MODEL or "gemini-3.5-flash-lite").strip() or "gemini-3.5-flash-lite"
     prompt = (
         f"Context: Veil previously asked the merchant 'How much in naira?' for a draft payment link.\n"
         f"Merchant message: {cleaned}"
@@ -134,7 +134,11 @@ async def parse_message_with_gemini(
         "response_mime_type": "application/json",
         "response_schema": GeminiWhatsAppParse,
     }
-    if "2.5-flash" in model_name or "3.8-flash" in model_name:
+    supports_thinking_zero = (
+        any(tag in model_name for tag in ("2.5-flash", "3.5-flash", "3.6-flash", "3.7-flash", "3.8-flash", "3.1-flash-lite"))
+        and "3.5-flash-lite" not in model_name
+    )
+    if supports_thinking_zero:
         config_kwargs["thinking_config"] = types.ThinkingConfig(thinking_budget=0)
 
     try:
