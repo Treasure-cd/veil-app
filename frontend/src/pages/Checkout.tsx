@@ -51,6 +51,7 @@ import {
   USDC_MINT,
   solanaExplorerTxUrl,
 } from '../lib/network'
+import { payPrivateInvoice } from '../lib/umbra'
 
 const PAJ_TOKENS = ['USDC', 'SOL', 'USDT', 'USDG'] as const
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -169,6 +170,7 @@ function decimalToAtomic(value: string, decimals: number): bigint {
 export default function Checkout() {
   const { id } = useParams()
   const { connection } = useConnection()
+  const walletContext = useWallet()
   const {
     wallets,
     wallet,
@@ -178,7 +180,7 @@ export default function Checkout() {
     select,
     connect,
     sendTransaction,
-  } = useWallet()
+  } = walletContext
   const { user } = useAuth()
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null)
@@ -203,6 +205,7 @@ export default function Checkout() {
   const [pendingTransaction, setPendingTransaction] = useState<
     ({ signature: string } & BlockhashWithExpiryBlockHeight) | null
   >(null)
+  const [pendingPrivateSignature, setPendingPrivateSignature] = useState<string | null>(null)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
@@ -400,7 +403,34 @@ export default function Checkout() {
     let paymentPhase = 'Preparing the payment'
     const isFiatSettlement = invoice.settlementTarget === 'fiat'
     let activeOrder = isFiatSettlement ? invoice.pajOfframp ?? null : null
+    const isPrivatePayment = !isFiatSettlement && invoice.receiveMode === 'private'
     try {
+      if (isPrivatePayment) {
+        let signature = pendingPrivateSignature
+        if (!signature) {
+          signature = await payPrivateInvoice({
+            wallet: walletContext,
+            recipientAddress: invoice.recipientAddress,
+            mint: invoice.mint,
+            amountAtomic: BigInt(invoice.amountAtomic),
+            onStatus: (message) => {
+              paymentPhase = message
+            },
+          })
+          setPendingPrivateSignature(signature)
+        }
+
+        paymentPhase = 'Confirming the private payment with Veil'
+        const confirmedInvoice = await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
+          method: 'POST',
+          body: JSON.stringify({ signature }),
+        })
+        setConfirmedSignature(null)
+        setInvoice({ ...invoice, ...confirmedInvoice, status: 'funded', fundSignature: null })
+        setPendingPrivateSignature(null)
+        return
+      }
+
       let pending = pendingTransaction
       if (!pending) {
         const rpcEndpoint = safeRpcEndpoint(connection.rpcEndpoint)
@@ -811,7 +841,7 @@ export default function Checkout() {
             )}
           </div>
         )}
-        {(confirmedSignature || invoice.fundSignature) && (
+        {invoice.receiveMode !== 'private' && (confirmedSignature || invoice.fundSignature) && (
           <a
             href={solanaExplorerTxUrl(confirmedSignature || invoice.fundSignature || '')}
             target="_blank"
@@ -826,7 +856,9 @@ export default function Checkout() {
             ? 'This NGN bank transfer has been verified by FossaPay. You can safely close this page.'
             : pajOrder
               ? 'This on-chain transfer settles to the merchant’s Nigerian bank account via Paj Cash. You can safely close this page.'
-              : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
+              : invoice.receiveMode === 'private'
+                ? 'This payment was shielded using Umbra. You can safely close this page.'
+                : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
         </p>
       </CheckoutFrame>
     )
@@ -1146,8 +1178,9 @@ export default function Checkout() {
                   ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
                   : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
                 <p>
-                  This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
-                  {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
+                  {invoice.receiveMode === 'private'
+                    ? 'This payment is shielded via Umbra. Your wallet and payment details are not publicly linked to the merchant. The sender wallet and amount remain visible in the Umbra deposit transaction.'
+                    : 'This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.'}
                 </p>
               </div>
             </div>
@@ -1155,8 +1188,8 @@ export default function Checkout() {
 
           {paymentError && (
             <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
-              {pendingTransaction
-                ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
+              {pendingTransaction || pendingPrivateSignature
+                ? 'Payment sent, but confirmation is pending. Retry to finish confirmation. '
                 : ''}
               {paymentError}
               {IS_DEVNET && paymentError.includes('No USDC token account') && (
@@ -1193,12 +1226,12 @@ export default function Checkout() {
                 loading={paying}
                 onClick={() => void handlePay()}
                 disabled={
-                  (expired && !pendingTransaction) ||
+                  (expired && !pendingTransaction && !pendingPrivateSignature) ||
                   (isFiatSettlement &&
                     (NETWORK !== 'mainnet-beta' || (pajTokenChoice === 'CUSTOM' && !customMint.trim())))
                 }
               >
-                {pendingTransaction
+                {pendingTransaction || pendingPrivateSignature
                   ? 'Retry payment confirmation'
                   : isFiatSettlement
                     ? matchesQuote && pajOrder?.tokenAmount

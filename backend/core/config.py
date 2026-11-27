@@ -66,7 +66,7 @@ class Settings(BaseSettings):
     WASENDER_API_KEY: str | None = Field(default=None)
     TWILIO_AUTH_TOKEN: str | None = Field(default=None)
     WEBHOOK_PUBLIC_URL: str | None = Field(default=None)
-    FRONTEND_URL: str = Field(default="https://veil.app")
+    FRONTEND_URL: str = Field(default="https://yourveil.vercel.app")
     TWILIO_WHATSAPP_FROM: str | None = Field(default=None)
     TWILIO_SANDBOX_JOIN_CODE: str | None = Field(default=None)
     WHATSAPP_DEMO_MODE: str = Field(default="false")

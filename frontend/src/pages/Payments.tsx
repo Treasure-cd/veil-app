@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { useWallet } from '@solana/wallet-adapter-react'
 import {
   Bank,
   CheckCircle,
@@ -18,6 +19,7 @@ import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCar
 import { BankTransferCard } from '../components/payments/BankTransferCard'
 import { PayoutsPanel } from '../components/payments/PayoutsPanel'
 import { reconcileFiatPayment, type FeeBearer, type FiatPayment } from '../services/fiat'
+import { registerUmbraRecipient } from '../lib/umbra'
 import {
   getPajRates,
   listMerchantBankAccounts,
@@ -29,6 +31,7 @@ interface PaymentIntent {
   amount_ngn: string
   amountAtomic: string
   recipientAddress: string
+  receiveMode: 'public' | 'private'
   settlementTarget?: 'crypto' | 'fiat'
   fiatCheckout?: FiatPayment | null
   bankAccount?: MerchantBankAccount | null
@@ -44,6 +47,7 @@ type PaymentsSection = 'request' | 'payouts'
 
 export default function Payments() {
   const { user } = useAuth()
+  const wallet = useWallet()
   const [section, setSection] = useState<PaymentsSection>('request')
   const [amount, setAmount] = useState('')
   const token = 'USDC'
@@ -53,6 +57,7 @@ export default function Payments() {
   const [includeFiatCheckout, setIncludeFiatCheckout] = useState(true)
   const [feeBearer, setFeeBearer] = useState<FeeBearer>('customer')
   const [settlementTarget, setSettlementTarget] = useState<'crypto' | 'fiat'>('crypto')
+  const [receiveMode, setReceiveMode] = useState<'public' | 'private'>('public')
   const [bankAccounts, setBankAccounts] = useState<MerchantBankAccount[]>([])
   const [selectedBankAccountId, setSelectedBankAccountId] = useState('')
   const [bankAccountsLoading, setBankAccountsLoading] = useState(true)
@@ -68,10 +73,15 @@ export default function Payments() {
     fiatCheckout: FiatPayment | null
     settlementTarget: 'crypto' | 'fiat'
     recipientAddress: string
+    receiveMode: 'public' | 'private'
     bankAccount: MerchantBankAccount | null
   } | null>(null)
   const [copied, setCopied] = useState(false)
   const [copiedDeposit, setCopiedDeposit] = useState(false)
+
+  useEffect(() => {
+    if (settlementTarget === 'fiat') setReceiveMode('public')
+  }, [settlementTarget])
 
   useEffect(() => {
     let active = true
@@ -140,12 +150,14 @@ export default function Payments() {
   }, [amount, rate])
 
   async function handleGenerate() {
+    const includeBankTransfer = includeFiatCheckout &&
+      !(settlementTarget === 'crypto' && receiveMode === 'private')
     setError(null)
     if (!/^\d+(?:\.\d{1,2})?$/.test(amount) || Number(amount) <= 0) {
       setError('Enter a positive naira amount with up to two decimal places.')
       return
     }
-    if (includeFiatCheckout && (!/^\d+$/.test(amount.trim()) || Number(amount) < 1)) {
+    if (includeBankTransfer && (!/^\d+$/.test(amount.trim()) || Number(amount) < 1)) {
       setError('Bank transfer checkouts require a whole-naira amount (no kobo decimals) of at least ₦1.')
       return
     }
@@ -161,9 +173,20 @@ export default function Payments() {
       setError('Link a Nigerian bank account below before creating a fiat-settled payment link.')
       return
     }
+    if (
+      settlementTarget === 'crypto' &&
+      receiveMode === 'private' &&
+      (!wallet.connected || wallet.publicKey?.toBase58() !== user.address)
+    ) {
+      setError('Connect the merchant wallet receiving this payment to set up its Umbra account.')
+      return
+    }
 
     setIsLoading(true)
     try {
+      if (settlementTarget === 'crypto' && receiveMode === 'private') {
+        await registerUmbraRecipient({ wallet })
+      }
       const intent = await api<PaymentIntent>('/v1/payments/intents', {
         method: 'POST',
         body: JSON.stringify({
@@ -171,9 +194,9 @@ export default function Payments() {
           token,
           amount_ngn: amount,
           recipientAddress: user.address,
-          receiveMode: 'public',
+          receiveMode: settlementTarget === 'crypto' ? receiveMode : 'public',
           memo: memo.trim() || 'Payment request',
-          includeFiatCheckout,
+          includeFiatCheckout: includeBankTransfer,
           feeBearer,
           settlementTarget,
           ...(settlementTarget === 'fiat' && selectedBankAccount
@@ -188,6 +211,7 @@ export default function Payments() {
         fiatCheckout: intent.fiatCheckout ?? null,
         settlementTarget: intent.settlementTarget ?? settlementTarget,
         recipientAddress: intent.recipientAddress,
+        receiveMode: intent.receiveMode ?? (settlementTarget === 'crypto' ? receiveMode : 'public'),
         bankAccount: intent.bankAccount ?? (settlementTarget === 'fiat' ? selectedBankAccount : null),
       })
       setGeneratedLink(new URL(`/pay/${intent.id}`, window.location.origin).toString())
@@ -296,6 +320,12 @@ export default function Payments() {
                     ? `${generatedPayment.bankAccount.bankName} · ${generatedPayment.bankAccount.accountNumber}`
                     : 'your linked bank account'}.
                 </>
+              ) : generatedPayment?.receiveMode === 'private' ? (
+                <>
+                  Share this checkout link. Payments are routed through Umbra to your private receiving account.
+                  The sender wallet and amount remain visible in the Umbra deposit transaction, but are not linked
+                  there to your merchant account.
+                </>
               ) : (
                 <>
                   Share this checkout link. Your customer does not need a Veil account and can pay via{' '}
@@ -303,6 +333,11 @@ export default function Payments() {
                 </>
               )}
             </p>
+            {generatedPayment?.receiveMode === 'private' && (
+              <span className="mt-3 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+                Private · Umbra
+              </span>
+            )}
             {generatedPayment && (
               <div className="mt-4 flex justify-center">
                 <Money
@@ -428,9 +463,9 @@ export default function Payments() {
                     id="payment-amount"
                     type="number"
                     min="0"
-                    step={includeFiatCheckout ? '1' : 'any'}
-                    inputMode={includeFiatCheckout ? 'numeric' : 'decimal'}
-                    placeholder={includeFiatCheckout ? '5000' : '0.00'}
+                    step={includeFiatCheckout && receiveMode !== 'private' ? '1' : 'any'}
+                    inputMode={includeFiatCheckout && receiveMode !== 'private' ? 'numeric' : 'decimal'}
+                    placeholder={includeFiatCheckout && receiveMode !== 'private' ? '5000' : '0.00'}
                     value={amount}
                     onChange={(event) => setAmount(event.target.value)}
                     className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 font-mono text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
@@ -444,13 +479,16 @@ export default function Payments() {
                   >
                     {settlementTarget === 'fiat'
                       ? `${includeFiatCheckout ? 'Fiat Bank Transfer · ' : ''}Multi-token Solana → NGN`
-                      : includeFiatCheckout
+                      : receiveMode === 'private'
+                        ? `Private USDC · Umbra (${NETWORK_LABEL[NETWORK]})`
+                        : includeFiatCheckout
                         ? `Fiat Bank Transfer · USDC (${NETWORK_LABEL[NETWORK]})`
                         : `NGN → USDC · ${NETWORK_LABEL[NETWORK]}`}
                   </div>
                 </div>
               </div>
 
+              {!(settlementTarget === 'crypto' && receiveMode === 'private') && (
               <div className="border-t border-primary/10 pt-5">
                 <p className="text-sm font-medium">Buyer payment options</p>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
@@ -514,6 +552,7 @@ export default function Payments() {
                   </div>
                 )}
               </div>
+              )}
 
               <div className="border-t border-primary/10 pt-5">
                 <p className="text-sm font-medium">How you receive funds</p>
@@ -611,10 +650,45 @@ export default function Payments() {
                   </div>
                 )}
 
-                <p className="mt-3 flex items-center gap-1.5 text-xs text-foreground/50">
-                  <LockKey size={14} aria-hidden="true" />
-                  Private wallet settlement is not available yet.
-                </p>
+                {settlementTarget === 'crypto' && (
+                  <div className="mt-4">
+                    <p className="text-sm font-medium">Receiving privacy</p>
+                    <div className="mt-2 grid gap-2 sm:grid-cols-2" role="group" aria-label="Receiving privacy mode">
+                      <button
+                        type="button"
+                        aria-pressed={receiveMode === 'public'}
+                        onClick={() => setReceiveMode('public')}
+                        className={`rounded-card border p-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                          receiveMode === 'public'
+                            ? 'border-primary/35 bg-primary/5'
+                            : 'border-primary/10 bg-background hover:border-primary/25'
+                        }`}
+                      >
+                        <p className="text-sm font-semibold text-primary">Public</p>
+                        <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                          Direct on-chain transfer to your wallet.
+                        </p>
+                      </button>
+                      <button
+                        type="button"
+                        aria-pressed={receiveMode === 'private'}
+                        onClick={() => setReceiveMode('private')}
+                        className={`rounded-card border p-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                          receiveMode === 'private'
+                            ? 'border-amber-500/45 bg-amber-50'
+                            : 'border-primary/10 bg-background hover:border-primary/25'
+                        }`}
+                      >
+                        <p className="flex items-center gap-1.5 text-sm font-semibold text-primary">
+                          <LockKey size={15} aria-hidden="true" /> Private (Umbra)
+                        </p>
+                        <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                          Umbra shields the receiving account link. The sender wallet and amount remain visible in the deposit transaction.
+                        </p>
+                      </button>
+                    </div>
+                  </div>
+                )}
               </div>
             </section>
 
@@ -632,6 +706,11 @@ export default function Payments() {
                 <span className="mt-1 inline-flex rounded-pill bg-primary/10 px-2.5 py-0.5 text-xs font-medium text-primary">
                   {settlementTarget === 'fiat' ? 'Settles to NGN Bank (Paj Cash)' : 'Settles to Crypto Wallet'}
                 </span>
+                {settlementTarget === 'crypto' && receiveMode === 'private' && (
+                  <span className="mt-2 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+                    Private · Umbra
+                  </span>
+                )}
                 <p className="mt-2 text-xs text-foreground/50">
                   {rate ? 'Live estimate · rate locks for 30 minutes' : rateError ? 'Rate unavailable' : 'Loading live rate…'}
                 </p>
