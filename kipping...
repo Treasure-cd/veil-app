@@ -1,0 +1,51 @@
+[1mdiff --cc backend/core/config.py[m
+[1mindex 2d6ec94,4bbb130..0000000[m
+[1m--- a/backend/core/config.py[m
+[1m+++ b/backend/core/config.py[m
+[36m@@@ -25,39 -19,10 +25,46 @@@[m [mclass Settings(BaseSettings)[m
+      PORT: int = Field(default=8000)[m
+      DATABASE_URL: str = Field(validation_alias=AliasChoices("DATABASE_URL_DEV", "DATABASE_URL"))[m
+      SQL_ECHO: bool = Field(default=False)[m
+[32m++<<<<<<< HEAD[m
+[32m +    SOLANA_NETWORK: str = Field(default="mainnet-beta")[m
+[32m +    SOLANA_RPC_URL: str = Field(default="")[m
+[32m +    USDC_MINT: str = Field(default="")[m
+[32m +    SOL_MINT: str = Field(default=NATIVE_SOL_MINT)[m
+[32m +[m
+[32m +    @model_validator(mode="after")[m
+[32m +    def _resolve_solana_network_defaults(self) -> "Settings":[m
+[32m +        raw = (self.SOLANA_NETWORK or "").strip().lower()[m
+[32m +        if raw in ("", "mainnet", "mainnet-beta"):[m
+[32m +            self.SOLANA_NETWORK = "mainnet-beta"[m
+[32m +            if not (self.SOLANA_RPC_URL or "").strip():[m
+[32m +                self.SOLANA_RPC_URL = MAINNET_RPC_URL[m
+[32m +            if not (self.USDC_MINT or "").strip():[m
+[32m +                self.USDC_MINT = MAINNET_USDC_MINT[m
+[32m +        elif raw == "devnet":[m
+[32m +            self.SOLANA_NETWORK = "devnet"[m
+[32m +            if not (self.SOLANA_RPC_URL or "").strip():[m
+[32m +                self.SOLANA_RPC_URL = DEVNET_RPC_URL[m
+[32m +            if not (self.USDC_MINT or "").strip():[m
+[32m +                self.USDC_MINT = DEVNET_USDC_MINT[m
+[32m +        else:[m
+[32m +            raise ValueError("SOLANA_NETWORK must be 'mainnet-beta', 'mainnet', or 'devnet'")[m
+[32m +        if not (self.SOL_MINT or "").strip():[m
+[32m +            self.SOL_MINT = NATIVE_SOL_MINT[m
+[32m +        return self[m
+[32m +[m
+[32m +    @property[m
+[32m +    def is_mainnet(self) -> bool:[m
+[32m +        return self.SOLANA_NETWORK == "mainnet-beta"[m
+[32m +[m
+[32m +    @property[m
+[32m +    def known_usdc_mints(self) -> tuple[str, ...]:[m
+[32m +        return tuple(dict.fromkeys((self.USDC_MINT, MAINNET_USDC_MINT, DEVNET_USDC_MINT)))[m
+[32m++=======[m
+[32m+     SOLANA_RPC_URL: str = Field(...)[m
+[32m+     SOLANA_NETWORK: str = Field(default="mainnet-beta")[m
+[32m+     USDC_MINT: str = Field(default="EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v")[m
+[32m+     SOL_MINT: str = Field(default="So11111111111111111111111111111111111111112")[m
+[32m++>>>>>>> a605351 (Private payments, umbra switched to mainnet, devnet tags made dynamic)[m
+      RATE_NGN_PER_SOL: float | None = Field(default=None)[m
+      RATE_NGN_PER_USDC: float | None = Field(default=None)[m
+      [m

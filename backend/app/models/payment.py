@@ -72,6 +72,7 @@ class PaymentIntent(SQLModel, table=True):
     expires_at: Optional[datetime] = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
     recipient_address: str = Field(...)
     receive_mode: str = Field(default="private")
+    allow_fiat_checkout: bool = Field(default=True)
     settlement_target: str = Field(default=SettlementTarget.CRYPTO)
     bank_account_id: Optional[UUID] = Field(
         default=None, foreign_key="merchant_bank_accounts.id", index=True

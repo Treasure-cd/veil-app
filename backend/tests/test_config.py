@@ -59,6 +59,37 @@ class SettingsNetworkTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             Settings(_env_file=None, SOLANA_NETWORK="testnet", **BASE_SECRETS)
 
+    def test_whatsapp_defaults_to_usdc_and_fossapay_without_private_payments(self) -> None:
+        cfg = Settings(_env_file=None, **BASE_SECRETS)
+        self.assertEqual(cfg.whatsapp_payment_methods, {"usdc", "fossapay"})
+        self.assertFalse(cfg.WHATSAPP_PRIVATE_PAYMENTS)
+
+    def test_whatsapp_can_be_configured_for_usdc_only_and_private_payments(self) -> None:
+        cfg = Settings(
+            _env_file=None,
+            WHATSAPP_PAYMENT_METHODS="USDC",
+            WHATSAPP_PRIVATE_PAYMENTS=True,
+            **BASE_SECRETS,
+        )
+        self.assertEqual(cfg.whatsapp_payment_methods, {"usdc"})
+        self.assertTrue(cfg.WHATSAPP_PRIVATE_PAYMENTS)
+
+    def test_private_whatsapp_payments_reject_fossapay(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                _env_file=None,
+                WHATSAPP_PRIVATE_PAYMENTS=True,
+                **BASE_SECRETS,
+            )
+
+    def test_whatsapp_payment_methods_require_usdc(self) -> None:
+        with self.assertRaises(ValidationError):
+            Settings(
+                _env_file=None,
+                WHATSAPP_PAYMENT_METHODS="fossapay",
+                **BASE_SECRETS,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

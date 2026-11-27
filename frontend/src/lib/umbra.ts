@@ -5,22 +5,26 @@ import {
   type Address,
 } from '@solana/kit'
 import { createSignerFromWalletAccount, getUmbraClient } from '@umbra-privacy/sdk'
-import { getATAIntoETADirectDepositorFunction } from '@umbra-privacy/sdk/deposit'
+import {
+  getATAIntoETADirectDepositorFunction,
+  getATAIntoReceiverBurnableStealthPoolNoteCreatorFunction,
+} from '@umbra-privacy/sdk/deposit'
 import { getUserRegistrationFunction } from '@umbra-privacy/sdk/registration'
 import { createU64 } from '@umbra-privacy/sdk/types'
+import { getATAIntoStealthPoolNoteCreatorProver } from '@umbra-privacy/sdk/zk-prover'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
 import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js'
 
 
-import { NETWORK, SOLANA_GENESIS_HASH, SOLANA_RPC_URL } from './network'
+import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, SOLANA_RPC_URL, USDC_MINT } from './network'
 
-const DEVNET_RPC_URL = SOLANA_RPC_URL || clusterApiUrl('devnet')
-const DEVNET_WS_URL =
-  process.env.SOLANA_WS_URL || DEVNET_RPC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
+const RPC_URL = SOLANA_RPC_URL || clusterApiUrl(NETWORK)
+const WS_URL =
+  process.env.SOLANA_WS_URL || RPC_URL.replace(/^https:/, 'wss:').replace(/^http:/, 'ws:')
 
-// Umbra devnet currently supports wSOL only.
-export const UMBRA_DEVNET_MINTS: Record<string, Address> = {
+export const UMBRA_MINTS: Record<string, Address> = {
   SOL: address('So11111111111111111111111111111111111111112'),
+  USDC: address(USDC_MINT),
 }
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -31,6 +35,19 @@ export interface FundVaultParams {
   wallet: WalletContextState
   token: 'USDC' | 'SOL'
   totalAmountAtomic: bigint
+  onStatus?: (message: string) => void
+}
+
+interface PrivateInvoiceParams {
+  wallet: WalletContextState
+  recipientAddress: string
+  mint: string
+  amountAtomic: bigint
+  onStatus?: (message: string) => void
+}
+
+interface RegisterUmbraRecipientParams {
+  wallet: WalletContextState
   onStatus?: (message: string) => void
 }
 
@@ -68,7 +85,9 @@ function buildBrowserSigner(wallet: WalletContextState) {
 
   const txEncoder = getTransactionEncoder()
   const txDecoder = getTransactionDecoder()
-  const chain = `solana:${NETWORK}` as `${string}:${string}`
+  const chain: `${string}:${string}` = NETWORK === 'mainnet-beta'
+    ? 'solana:mainnet'
+    : 'solana:devnet'
 
   const signWithWallet = async (tx: any) => {
     const [output] = await signTransactionFeature.signTransaction({
@@ -106,6 +125,17 @@ function buildBrowserSigner(wallet: WalletContextState) {
   }
 }
 
+async function createClient(wallet: WalletContextState) {
+  const signer = buildBrowserSigner(wallet)
+  const client = await getUmbraClient({
+    network: NETWORK === 'mainnet-beta' ? 'mainnet' : 'devnet',
+    rpcUrl: RPC_URL,
+    rpcSubscriptionsUrl: WS_URL,
+    signer,
+  })
+  return { client, signer }
+}
+
 function formatTokenAmount(amount: bigint, decimals: number): string {
   const scale = 10n ** BigInt(decimals)
   const whole = (amount / scale).toString()
@@ -113,51 +143,58 @@ function formatTokenAmount(amount: bigint, decimals: number): string {
   return fraction ? `${whole}.${fraction}` : whole
 }
 
-async function checkDevnetBalances(
+async function checkBalances(
   wallet: WalletContextState,
-  requiredWsol: bigint,
+  token: FundVaultParams['token'],
+  requiredTokenAtomic: bigint,
 ): Promise<void> {
   const publicKey = wallet.publicKey
   if (!publicKey) throw new Error('Connect a wallet before funding payroll.')
 
-  const connection = new Connection(DEVNET_RPC_URL, 'confirmed')
+  const connection = new Connection(RPC_URL, 'confirmed')
   const owner = new PublicKey(publicKey.toBase58())
-  const mint = new PublicKey(UMBRA_DEVNET_MINTS.SOL)
-  const [wsolAta] = await PublicKey.findProgramAddress(
+  const mintAddress = UMBRA_MINTS[token]
+  if (!mintAddress) {
+    throw new Error(`Umbra ${NETWORK_LABEL[NETWORK]} does not support ${token} deposits.`)
+  }
+  const mint = new PublicKey(mintAddress)
+  const [tokenAta] = await PublicKey.findProgramAddress(
     [owner.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mint.toBytes()],
     ASSOCIATED_TOKEN_PROGRAM_ID,
   )
 
   let nativeLamports: bigint
-  let wsolAtomic = 0n
+  let tokenAtomic = 0n
+  const wrongClusterMessage = `Umbra requires a ${NETWORK_LABEL[NETWORK]} RPC. The configured RPC is connected to a different Solana cluster.`
   try {
     const genesisHash = await connection.getGenesisHash()
-    if (genesisHash !== SOLANA_GENESIS_HASH.devnet) {
-      throw new Error('Payroll requires a Devnet RPC. The configured RPC is connected to a different Solana cluster.')
+    if (genesisHash !== SOLANA_GENESIS_HASH[NETWORK]) {
+      throw new Error(wrongClusterMessage)
     }
     const balance = await connection.getBalance(owner, 'confirmed')
     nativeLamports = BigInt(balance)
-    const ataInfo = await connection.getAccountInfo(wsolAta, 'confirmed')
+    const ataInfo = await connection.getAccountInfo(tokenAta, 'confirmed')
     if (ataInfo) {
-      const tokenBalance = await connection.getTokenAccountBalance(wsolAta, 'confirmed')
-      wsolAtomic = BigInt(tokenBalance.value.amount)
+      const tokenBalance = await connection.getTokenAccountBalance(tokenAta, 'confirmed')
+      tokenAtomic = BigInt(tokenBalance.value.amount)
     }
   } catch (error) {
-    console.error('[Umbra] Devnet balance preflight failed', error)
-    if (error instanceof Error && error.message.startsWith('Payroll requires a Devnet RPC.')) {
+    console.error('[Umbra] Balance preflight failed', error)
+    if (error instanceof Error && error.message === wrongClusterMessage) {
       throw error
     }
-    throw new Error('Could not check your devnet SOL and wSOL balances. Check the Solana RPC and retry.')
+    throw new Error(`Could not check your SOL and ${token} balances. Check the Solana RPC and retry.`)
   }
 
-  if (wsolAtomic < requiredWsol) {
+  const decimals = token === 'USDC' ? 6 : 9
+  if (tokenAtomic < requiredTokenAtomic) {
     throw new Error(
-      `Not enough wSOL in your wallet ATA. Current: ${formatTokenAmount(wsolAtomic, 9)} wSOL; required: ${formatTokenAmount(requiredWsol, 9)} wSOL.`,
+      `Not enough ${token} in your wallet ATA. Current: ${formatTokenAmount(tokenAtomic, decimals)} ${token}; required: ${formatTokenAmount(requiredTokenAtomic, decimals)} ${token}.`,
     )
   }
   if (nativeLamports < MIN_NATIVE_SOL_LAMPORTS) {
     throw new Error(
-      `Low devnet SOL balance: ${formatTokenAmount(nativeLamports, 9)} SOL. Umbra registration and transaction fees may need at least 0.05 SOL; fund this wallet and retry.`,
+      `Low SOL balance: ${formatTokenAmount(nativeLamports, 9)} SOL. Umbra registration and transaction fees may need at least 0.05 SOL; fund this wallet and retry.`,
     )
   }
 }
@@ -208,6 +245,70 @@ function diagnoseUmbraError(stage: string, error: unknown): Error {
   return new Error(`${stage}: ${firstMeaningfulLog ?? message}`)
 }
 
+/** Ensures a merchant can receive Umbra notes at their registered wallet address. */
+export async function registerUmbraRecipient({
+  wallet,
+  onStatus,
+}: RegisterUmbraRecipientParams): Promise<void> {
+  const { client } = await createClient(wallet)
+  onStatus?.('Preparing your private receiving account...')
+  const register = getUserRegistrationFunction({ client })
+  try {
+    await register({ confidential: true, anonymous: false })
+  } catch (error) {
+    throw diagnoseUmbraError('Umbra private receiving account registration', error)
+  }
+}
+
+/** Sends USDC into Umbra with the recipient's registered account as the note owner. */
+export async function payPrivateInvoice({
+  wallet,
+  recipientAddress,
+  mint,
+  amountAtomic,
+  onStatus,
+}: PrivateInvoiceParams): Promise<string> {
+  if (mint !== UMBRA_MINTS.USDC) {
+    throw new Error(`Private checkout supports only ${NETWORK_LABEL[NETWORK]} USDC.`)
+  }
+  if (amountAtomic <= 0n) {
+    throw new Error('Private payment amount must be greater than zero.')
+  }
+
+  onStatus?.('Checking SOL and USDC balances...')
+  await checkBalances(wallet, 'USDC', amountAtomic)
+  const { client } = await createClient(wallet)
+  onStatus?.('Preparing the shielded Umbra transfer...')
+
+  const createNote = getATAIntoReceiverBurnableStealthPoolNoteCreatorFunction(
+    { client },
+    { zkProver: getATAIntoStealthPoolNoteCreatorProver() },
+  )
+  let result
+  try {
+    result = await createNote(
+      {
+        amount: createU64({ value: amountAtomic }),
+        destinationAddress: address(recipientAddress),
+        mint: address(mint),
+      },
+      {
+        hooks: {
+          onZkProofGenerationStart: async () => {
+            onStatus?.('Generating the Umbra shielded-transfer proof...')
+          },
+        },
+      },
+    )
+  } catch (error) {
+    throw diagnoseUmbraError('Umbra private invoice payment', error)
+  }
+  if (!result.createUtxoSignature) {
+    throw new Error('Umbra private payment did not return a confirmed transaction signature.')
+  }
+  return String(result.createUtxoSignature)
+}
+
 /** Registers the employer and deposits payroll funds into their Umbra ETA. */
 export async function fundPayrollVault({
   wallet,
@@ -215,29 +316,19 @@ export async function fundPayrollVault({
   totalAmountAtomic,
   onStatus,
 }: FundVaultParams): Promise<string> {
-  if (NETWORK !== 'devnet') {
-    throw new Error('Payroll vault funding is only supported on Solana Devnet; Umbra mainnet support is not configured.')
-  }
-
-  const mint = UMBRA_DEVNET_MINTS[token]
+  const mint = UMBRA_MINTS[token]
   if (!mint) {
-    throw new Error('Umbra devnet currently supports SOL (wSOL) only. Select SOL to test on devnet.')
+    throw new Error(`Umbra ${NETWORK_LABEL[NETWORK]} does not support ${token} deposits.`)
   }
   if (totalAmountAtomic <= 0n) {
     throw new Error('Total payroll amount must be greater than zero.')
   }
 
-  onStatus?.('Checking devnet SOL and wSOL balances...')
-  await checkDevnetBalances(wallet, totalAmountAtomic)
+  onStatus?.(`Checking SOL and ${token} balances...`)
+  await checkBalances(wallet, token, totalAmountAtomic)
 
-  const signer = buildBrowserSigner(wallet)
-  onStatus?.('Initializing Umbra devnet client...')
-  const client = await getUmbraClient({
-    network: 'devnet',
-    rpcUrl: DEVNET_RPC_URL,
-    rpcSubscriptionsUrl: DEVNET_WS_URL,
-    signer,
-  })
+  onStatus?.(`Initializing Umbra ${NETWORK_LABEL[NETWORK]} client...`)
+  const { client, signer } = await createClient(wallet)
 
   onStatus?.('Checking Umbra account registration...')
   // The SDK checks the on-chain registration bits and skips completed steps.
@@ -257,7 +348,7 @@ export async function fundPayrollVault({
     // then compiles and signs the transaction, avoiding proof/preparation expiry.
     result = await deposit(signer.address, mint, createU64({ value: totalAmountAtomic }))
   } catch (error) {
-    throw diagnoseUmbraError('Umbra wSOL deposit', error)
+    throw diagnoseUmbraError(`Umbra ${token} deposit`, error)
   }
   if (!result.queueSignature) {
     throw new Error('Umbra deposit did not return a transaction signature.')

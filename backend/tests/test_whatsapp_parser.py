@@ -23,6 +23,20 @@ class WhatsAppParserTests(unittest.TestCase):
         self.assertEqual(parsed["amount_ngn"], Decimal("5000"))
         self.assertEqual(parsed["memo"], "jollof rice")
 
+    def test_payment_options_are_parsed_and_removed_from_memo(self):
+        parsed = parse_message(
+            "link 5k for lunch private pay instead crypto to crypto rather than crypto + bank transfer"
+        )
+        self.assertEqual(parsed["intent"], "create_link")
+        self.assertEqual(parsed["receive_mode"], "private")
+        self.assertTrue(parsed["crypto_only"])
+        self.assertEqual(parsed["memo"], "lunch")
+
+    def test_default_payment_options_are_unspecified(self):
+        parsed = parse_message("5000 for lunch")
+        self.assertIsNone(parsed["receive_mode"])
+        self.assertFalse(parsed["crypto_only"])
+
     def test_amount_variants(self):
         for message, amount in (("5k", "5000"), ("2.5k", "2500"), ("₦5000", "5000"), ("5000 naira", "5000")):
             with self.subTest(message=message):

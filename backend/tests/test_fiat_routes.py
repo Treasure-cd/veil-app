@@ -1,8 +1,10 @@
 from decimal import Decimal
+from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
 import json
 import os
+from types import SimpleNamespace
 import unittest
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
@@ -16,6 +18,7 @@ os.environ.setdefault("FOSSAPAY_WEBHOOK_SECRET", "whsec_test_secret")
 import jwt
 from fastapi.testclient import TestClient
 from solders.pubkey import Pubkey
+from solders.signature import Signature
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
 
@@ -24,6 +27,7 @@ from app.models.payment import FiatPayment, FiatPaymentFlow, FiatPaymentStatus, 
 from app.models.user import User
 from core.config import settings
 from core.session import get_session
+from app.routers import payments as payment_routes
 from main import app
 
 
@@ -173,6 +177,111 @@ class FiatRouterTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(funded_intent.status_code, 200)
         self.assertEqual(funded_intent.json()["status"], "funded")
         self.assertEqual(funded_intent.json()["fiatCheckout"]["status"], "completed")
+
+    async def test_private_funding_uses_umbra_verifier_and_hides_fund_signature(self) -> None:
+        async with self.session_factory() as db:
+            intent = PaymentIntent(
+                user_id=self.user.id,
+                merchant_ref="INV-PRIVATE-1",
+                mint=settings.USDC_MINT,
+                amount_atomic="1000000",
+                amount_ngn="1500",
+                recipient_address=self.user.address,
+                receive_mode="private",
+                memo="Private checkout",
+            )
+            db.add(intent)
+            await db.commit()
+            await db.refresh(intent)
+
+        with (
+            patch(
+                "app.routers.payments.verify_umbra_deposit",
+                new=AsyncMock(return_value=True),
+            ) as verify_umbra,
+            patch(
+                "app.routers.payments.verify_transfer",
+                new=AsyncMock(side_effect=AssertionError("public verification must not run")),
+            ),
+        ):
+            funded = self.client.post(
+                f"/v1/payments/intents/{intent.id}/confirm-fund",
+                json={"signature": "1" * 64},
+            )
+            self.assertEqual(funded.status_code, 200)
+            self.assertEqual(funded.json()["status"], "funded")
+            verify_umbra.assert_awaited_once()
+
+        public_intent = self.client.get(f"/v1/payments/intents/{intent.id}")
+        self.assertEqual(public_intent.status_code, 200)
+        self.assertNotIn("fundSignature", public_intent.json())
+        self.assertNotIn("payerAddress", public_intent.json())
+
+    async def test_umbra_verifier_requires_successful_program_call_and_exact_token_debit(self) -> None:
+        now = datetime.now(timezone.utc)
+        amount = "1000000"
+
+        def make_transaction(program_id: str, payer_debit: str):
+            return SimpleNamespace(
+                block_time=int(now.timestamp()),
+                transaction=SimpleNamespace(
+                    meta=SimpleNamespace(
+                        err=None,
+                        pre_token_balances=[
+                            SimpleNamespace(
+                                mint=settings.USDC_MINT,
+                                owner="payer",
+                                ui_token_amount=SimpleNamespace(amount=amount),
+                            )
+                        ],
+                        post_token_balances=[
+                            SimpleNamespace(
+                                mint=settings.USDC_MINT,
+                                owner="payer",
+                                ui_token_amount=SimpleNamespace(amount=payer_debit),
+                            ),
+                            SimpleNamespace(
+                                mint=settings.USDC_MINT,
+                                owner="umbra-pool",
+                                ui_token_amount=SimpleNamespace(amount=amount),
+                            ),
+                        ],
+                        inner_instructions=[],
+                    ),
+                    transaction=SimpleNamespace(
+                        message=SimpleNamespace(
+                            instructions=[SimpleNamespace(program_id=program_id)]
+                        )
+                    ),
+                ),
+            )
+
+        async def verify(transaction, expected_amount: str) -> bool:
+            class FakeClient:
+                async def __aenter__(self):
+                    return self
+
+                async def __aexit__(self, *_args):
+                    return None
+
+                async def get_transaction(self, *_args, **_kwargs):
+                    return SimpleNamespace(value=transaction)
+
+            with patch.object(settings, "SOLANA_NETWORK", "mainnet-beta"), patch(
+                "app.routers.payments.AsyncClient",
+                return_value=FakeClient(),
+            ):
+                return await payment_routes.verify_umbra_deposit(
+                    str(Signature.default()),
+                    settings.USDC_MINT,
+                    expected_amount,
+                    now - timedelta(seconds=5),
+                )
+
+        program_id = payment_routes.UMBRA_PROGRAM_IDS["mainnet-beta"]
+        self.assertTrue(await verify(make_transaction(program_id, "0"), amount))
+        self.assertFalse(await verify(make_transaction(program_id, "0"), "1000001"))
+        self.assertFalse(await verify(make_transaction("not-umbra", "0"), amount))
 
     async def test_merchant_fiat_payout_and_ownership_isolation(self) -> None:
         with (

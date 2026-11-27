@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import time
+from collections import defaultdict
 from uuid import UUID, uuid4
 from datetime import datetime, timezone
 from typing import Any, Literal, Optional
@@ -45,6 +46,10 @@ logger = logging.getLogger(__name__)
 _BANKS_CACHE: tuple[float, list[dict[str, Any]]] | None = None
 _PAJ_BANKS_CACHE: tuple[float, list[dict[str, Any]]] | None = None
 _BANKS_CACHE_TTL_SECONDS = 3600
+UMBRA_PROGRAM_IDS = {
+    "mainnet-beta": "UMBRAD2ishebJTcgCLkTkNUx1v3GyoAgpTRPeWoLykh",
+    "devnet": "DSuKkyqGVGgo4QtPABfxKJKygUDACbUhirnuv63mEpAJ",
+}
 
 class CreatePaymentIntentRequest(BaseModel):
     merchantRef: str
@@ -52,6 +57,7 @@ class CreatePaymentIntentRequest(BaseModel):
     amount_ngn: Decimal = Field(validation_alias=AliasChoices("amount_ngn", "amountNgn"))
     recipientAddress: str
     receiveMode: Literal["private", "public"] = "private"
+    allowFiatCheckout: bool = True
     settlementTarget: Literal["crypto", "fiat"] = "crypto"
     bankAccountId: Optional[UUID] = None
     memo: Optional[str] = None
@@ -412,11 +418,10 @@ def format_intent(
         "expires_at": intent.expires_at.replace(tzinfo=timezone.utc).isoformat().replace("+00:00", "Z") if intent.expires_at else None,
         "recipientAddress": intent.recipient_address,
         "receiveMode": intent.receive_mode,
+        "allowFiatCheckout": intent.allow_fiat_checkout,
         "settlementTarget": intent.settlement_target,
         "memo": intent.memo,
         "status": intent.status,
-        # This signature is public on Solana and lets payers inspect the confirmed transfer.
-        "fundSignature": intent.fund_signature,
         "createdAt": intent.created_at.isoformat() + "Z",
         "fiatCheckout": (
             format_fiat_payment(fiat_checkout, is_owner=is_owner)
@@ -443,6 +448,8 @@ def format_intent(
             )
         ),
     }
+    if intent.receive_mode != "private":
+        data["fundSignature"] = intent.fund_signature
     # Only show these fields to the merchant who owns the intent
     if is_owner:
         data.update({
@@ -571,6 +578,87 @@ async def verify_transfer(
         logger.exception("verify_transfer failed for %s", signature_str)
         return False
 
+async def verify_umbra_deposit(
+    signature_str: str,
+    mint: str,
+    amount_atomic: str,
+    after: datetime,
+    before: datetime | None = None,
+) -> bool:
+    network = settings.SOLANA_NETWORK.lower()
+    if network == "mainnet":
+        network = "mainnet-beta"
+    expected_program = UMBRA_PROGRAM_IDS.get(network)
+    if expected_program is None:
+        logger.error("Unsupported Solana network for Umbra verification: %s", network)
+        return False
+
+    try:
+        sig = Signature.from_string(signature_str)
+        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
+            tx = None
+            for attempt in range(6):
+                response = await client.get_transaction(
+                    sig,
+                    encoding="jsonParsed",
+                    commitment=Confirmed,
+                    max_supported_transaction_version=0,
+                )
+                tx = response.value
+                if tx is not None:
+                    break
+                if attempt < 5:
+                    await asyncio.sleep(1.5)
+
+        if tx is None or tx.transaction.meta is None:
+            logger.warning("Umbra transaction metadata unavailable for signature %s", signature_str)
+            return False
+        meta = tx.transaction.meta
+        if meta.err is not None:
+            logger.warning("Umbra transaction failed on-chain for signature %s", signature_str)
+            return False
+        if tx.block_time is None:
+            logger.warning("Block time missing for Umbra signature %s", signature_str)
+            return False
+
+        after_utc = after.replace(tzinfo=timezone.utc) if after.tzinfo is None else after.astimezone(timezone.utc)
+        if tx.block_time < after_utc.timestamp() - 60:
+            logger.warning("Umbra transaction predates intent for signature %s", signature_str)
+            return False
+        if before is not None:
+            expiry_utc = before.replace(tzinfo=timezone.utc) if before.tzinfo is None else before.astimezone(timezone.utc)
+            if tx.block_time >= expiry_utc.timestamp():
+                logger.warning("Umbra transaction occurred after intent expiry for signature %s", signature_str)
+                return False
+
+        instructions = list(tx.transaction.transaction.message.instructions)
+        for inner_group in meta.inner_instructions or []:
+            instructions.extend(inner_group.instructions)
+        if not any(
+            str(getattr(instruction, "program_id", "")) == expected_program
+            for instruction in instructions
+        ):
+            logger.warning("Umbra program invocation missing for signature %s", signature_str)
+            return False
+
+        token_deltas: dict[str, int] = defaultdict(int)
+        for entries, sign in ((meta.pre_token_balances, -1), (meta.post_token_balances, 1)):
+            for entry in entries or []:
+                if str(entry.mint) == mint and entry.owner:
+                    token_deltas[str(entry.owner)] += sign * int(entry.ui_token_amount.amount)
+        if -int(amount_atomic) not in token_deltas.values():
+            logger.warning(
+                "Umbra token debit mismatch for signature %s; expected %s %s",
+                signature_str,
+                amount_atomic,
+                mint,
+            )
+            return False
+        return True
+    except Exception:
+        logger.exception("verify_umbra_deposit failed for %s", signature_str)
+        return False
+
 async def _ensure_intent_fiat_checkout(
     db: AsyncSession,
     intent: PaymentIntent,
@@ -612,6 +700,11 @@ async def create_intent(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
+    if req.includeFiatCheckout and not req.allowFiatCheckout:
+        raise HTTPException(
+            status_code=400,
+            detail="Cannot create a bank-transfer checkout when FossaPay is disabled.",
+        )
     if req.includeFiatCheckout:
         dec = req.amount_ngn
         if not dec.is_finite() or dec != dec.to_integral_value() or dec < 1:
@@ -646,6 +739,12 @@ async def create_intent(
         recipient_address = bank_account.solana_address
         receive_mode = "public"
 
+    if receive_mode == "private" and req.includeFiatCheckout:
+        raise HTTPException(
+            status_code=400,
+            detail="Private Umbra payment links cannot include a bank-transfer checkout.",
+        )
+
     intent = await create_payment_intent(
         db=db,
         user_id=current_user.id,
@@ -656,6 +755,7 @@ async def create_intent(
         memo=req.memo,
         source="web",
         receive_mode=receive_mode,
+        allow_fiat_checkout=req.allowFiatCheckout,
         settlement_target=req.settlementTarget,
         bank_account_id=bank_account.id if bank_account else None,
     )
@@ -862,6 +962,20 @@ async def create_intent_fiat_checkout(
             return format_fiat_payment(existing, is_owner=is_owner)
         raise HTTPException(status_code=409, detail="Payment has already been funded or closed.")
 
+    existing = await _latest_checkout_for_intent(db, intent.id)
+    if existing and existing.status in (
+        FiatPaymentStatus.PENDING.value,
+        FiatPaymentStatus.PROCESSING.value,
+        FiatPaymentStatus.COMPLETED.value,
+    ):
+        is_owner = current_user is not None and intent.user_id == current_user.id
+        return format_fiat_payment(existing, is_owner=is_owner)
+    if not intent.allow_fiat_checkout or intent.receive_mode == "private":
+        raise HTTPException(
+            status_code=403,
+            detail="Bank transfer is not enabled for this payment request.",
+        )
+
     fiat_checkout = await _ensure_intent_fiat_checkout(db, intent)
     is_owner = current_user is not None and intent.user_id == current_user.id
     return format_fiat_payment(fiat_checkout, is_owner=is_owner)
@@ -932,6 +1046,11 @@ async def confirm_fund(
     offramp_order: PajOfframpOrder | None = None
 
     if req.pajOfframpOrderId is not None:
+        if intent.receive_mode == "private":
+            raise HTTPException(
+                status_code=400,
+                detail="Private Umbra payments cannot use a Paj Cash offramp order.",
+            )
         offramp_order = await db.get(PajOfframpOrder, req.pajOfframpOrderId)
         if not offramp_order or offramp_order.payment_intent_id != intent.id:
             raise HTTPException(status_code=404, detail="paj_offramp_not_found")
@@ -943,15 +1062,24 @@ async def confirm_fund(
             int((Decimal(offramp_order.token_amount) * (Decimal(10) ** offramp_order.token_decimals)).to_integral_value(rounding=ROUND_DOWN))
         )
 
-    is_valid_tx = await verify_transfer(
-        req.signature,
-        verify_mint,
-        verify_address,
-        verify_atomic,
-        intent.created_at,
-        expected_memo=f"veil:{intent.id}",
-        before=intent.expires_at,
-    )
+    if intent.receive_mode == "private":
+        is_valid_tx = await verify_umbra_deposit(
+            req.signature,
+            verify_mint,
+            verify_atomic,
+            intent.created_at,
+            before=intent.expires_at,
+        )
+    else:
+        is_valid_tx = await verify_transfer(
+            req.signature,
+            verify_mint,
+            verify_address,
+            verify_atomic,
+            intent.created_at,
+            expected_memo=f"veil:{intent.id}",
+            before=intent.expires_at,
+        )
     if not is_valid_tx:
         if expiry_utc and datetime.now(timezone.utc) >= expiry_utc:
             intent.status = "failed"

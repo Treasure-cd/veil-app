@@ -21,12 +21,47 @@ class ParsedMessage(TypedDict):
     amount_ngn: Decimal | None
     memo: str | None
     amount_error: Literal["too_low", "too_high"] | None
+    receive_mode: Literal["private", "public"] | None
+    crypto_only: bool
 
 
 def _normalized_text(text: str) -> str:
     text = unicodedata.normalize("NFKC", text).lower().strip()
     # Keep decimal points, but remove other punctuation so phrases are stable.
     return re.sub(r"[^\w.\s₦]", " ", text)
+
+
+def _payment_options(text: str) -> tuple[Literal["private", "public"] | None, bool]:
+    normalized = _normalized_text(text)
+    if re.search(r"\bprivate(?:\s+pay(?:ments?)?)?(?:\s+instead)?\b", normalized):
+        receive_mode: Literal["private", "public"] | None = "private"
+    elif re.search(r"\bpublic(?:\s+pay(?:ments?)?)?(?:\s+instead)?\b", normalized):
+        receive_mode = "public"
+    else:
+        receive_mode = None
+
+    crypto_only = bool(
+        re.search(
+            r"\bcrypto\s+to\s+crypto(?:\s+rather\s+than\s+(?:crypto\s+)?bank(?:\s+transfer)?)?\b",
+            normalized,
+        )
+        or re.search(r"\b(?:crypto\s+only|only\s+crypto|just\s+crypto)\b", normalized)
+        or re.search(r"\b(?:no|without)\s+(?:the\s+)?bank(?:\s+transfer)?\b", normalized)
+    )
+    return receive_mode, crypto_only
+
+
+def _remove_payment_options(text: str) -> str:
+    patterns = (
+        r"\bprivate(?:\s+pay(?:ments?)?)?(?:\s+instead)?\b",
+        r"\bpublic(?:\s+pay(?:ments?)?)?(?:\s+instead)?\b",
+        r"\bcrypto\s+to\s+crypto(?:\s+rather\s+than\s+(?:crypto\s+)?bank(?:\s+transfer)?)?\b",
+        r"\b(?:crypto\s+only|only\s+crypto|just\s+crypto)\b",
+        r"\b(?:no|without)\s+(?:the\s+)?bank(?:\s+transfer)?\b",
+    )
+    for pattern in patterns:
+        text = re.sub(pattern, " ", text)
+    return text
 
 
 def _extract_amount_and_memo(text: str) -> tuple[Decimal | None, str | None, str | None]:
@@ -44,7 +79,7 @@ def _extract_amount_and_memo(text: str) -> tuple[Decimal | None, str | None, str
         return None, None, None
 
     remainder = f"{text[:match.start()]} {text[match.end():]}"
-    remainder = _normalized_text(remainder)
+    remainder = _remove_payment_options(_normalized_text(remainder))
     words = [word for word in remainder.split() if word not in FILLER_WORDS and word != "₦"]
     memo = " ".join(words).strip() or None
     error = "too_low" if amount < MIN_AMOUNT_NGN else "too_high" if amount > MAX_AMOUNT_NGN else None
@@ -52,10 +87,15 @@ def _extract_amount_and_memo(text: str) -> tuple[Decimal | None, str | None, str
 
 
 def parse_message(text: str) -> ParsedMessage:
+    receive_mode, crypto_only = _payment_options(text)
     code_match = LINK_CODE_PATTERN.fullmatch(text)
     code_is_amount = bool(code_match and AMOUNT_PATTERN.fullmatch(code_match.group(1)))
     if code_match and not code_is_amount:
-        return {"intent": "link_code", "code": code_match.group(1), "amount_ngn": None, "memo": None, "amount_error": None}
+        return {
+            "intent": "link_code", "code": code_match.group(1), "amount_ngn": None,
+            "memo": None, "amount_error": None, "receive_mode": receive_mode,
+            "crypto_only": crypto_only,
+        }
 
     normalized = _normalized_text(text)
     compact = " ".join(normalized.split())
@@ -63,19 +103,33 @@ def parse_message(text: str) -> ParsedMessage:
         "hi", "hello", "hey", "menu", "help", "how far", "wetin i fit do",
     }
     if compact in phrases or any(compact.startswith(f"{phrase} ") for phrase in ("hi", "hello", "hey", "help")):
-        return {"intent": "menu", "code": None, "amount_ngn": None, "memo": None, "amount_error": None}
+        return {
+            "intent": "menu", "code": None, "amount_ngn": None, "memo": None,
+            "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+        }
 
     recent_phrases = {
         "recent", "payments", "sales", "history", "wetin i don collect", "wetin enter",
     }
     if compact in recent_phrases or any(phrase in compact for phrase in recent_phrases):
-        return {"intent": "recent_payments", "code": None, "amount_ngn": None, "memo": None, "amount_error": None}
+        return {
+            "intent": "recent_payments", "code": None, "amount_ngn": None, "memo": None,
+            "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+        }
 
     amount, memo, amount_error = _extract_amount_and_memo(text)
     is_link_request = bool(re.search(r"\b(link|request|collect)\b|make\s+(?:i\s+)?link", normalized))
     if amount is not None or is_link_request:
         if amount is None:
-            words = [word for word in normalized.split() if word not in FILLER_WORDS and word != "₦"]
+            remainder = _remove_payment_options(normalized)
+            words = [word for word in remainder.split() if word not in FILLER_WORDS and word != "₦"]
             memo = " ".join(words).strip() or None
-        return {"intent": "create_link", "code": None, "amount_ngn": amount, "memo": memo, "amount_error": amount_error}
-    return {"intent": "fallback", "code": None, "amount_ngn": None, "memo": None, "amount_error": None}
+        return {
+            "intent": "create_link", "code": None, "amount_ngn": amount, "memo": memo,
+            "amount_error": amount_error, "receive_mode": receive_mode,
+            "crypto_only": crypto_only,
+        }
+    return {
+        "intent": "fallback", "code": None, "amount_ngn": None, "memo": None,
+        "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+    }

@@ -51,6 +51,7 @@ import {
   USDC_MINT,
   solanaExplorerTxUrl,
 } from '../lib/network'
+import { payPrivateInvoice } from '../lib/umbra'
 
 const PAJ_TOKENS = ['USDC', 'SOL', 'USDT', 'USDG'] as const
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -68,6 +69,7 @@ interface InvoiceData {
   expires_at?: string | null
   recipientAddress: string
   receiveMode: string
+  allowFiatCheckout?: boolean
   settlementTarget?: 'crypto' | 'fiat'
   memo: string | null
   status: string
@@ -169,6 +171,7 @@ function decimalToAtomic(value: string, decimals: number): bigint {
 export default function Checkout() {
   const { id } = useParams()
   const { connection } = useConnection()
+  const walletContext = useWallet()
   const {
     wallets,
     wallet,
@@ -178,7 +181,7 @@ export default function Checkout() {
     select,
     connect,
     sendTransaction,
-  } = useWallet()
+  } = walletContext
   const { user } = useAuth()
 
   const [invoice, setInvoice] = useState<InvoiceData | null>(null)
@@ -203,6 +206,7 @@ export default function Checkout() {
   const [pendingTransaction, setPendingTransaction] = useState<
     ({ signature: string } & BlockhashWithExpiryBlockHeight) | null
   >(null)
+  const [pendingPrivateSignature, setPendingPrivateSignature] = useState<string | null>(null)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null)
@@ -231,7 +235,14 @@ export default function Checkout() {
           }
         }
         const wholeNgn = data.amount_ngn ? /^\d+$/.test(data.amount_ngn) && Number(data.amount_ngn) >= 1 : false
-        if (data.fiatCheckout || (wholeNgn && data.settlementTarget !== 'fiat')) setPayMethod('bank')
+        const bankTransferAvailable = Boolean(
+          data.fiatCheckout ||
+            (data.allowFiatCheckout !== false &&
+              data.receiveMode !== 'private' &&
+              wholeNgn &&
+              data.settlementTarget !== 'fiat'),
+        )
+        if (bankTransferAvailable) setPayMethod('bank')
         else setPayMethod('wallet')
       })
       .catch((err: unknown) => {
@@ -400,7 +411,34 @@ export default function Checkout() {
     let paymentPhase = 'Preparing the payment'
     const isFiatSettlement = invoice.settlementTarget === 'fiat'
     let activeOrder = isFiatSettlement ? invoice.pajOfframp ?? null : null
+    const isPrivatePayment = !isFiatSettlement && invoice.receiveMode === 'private'
     try {
+      if (isPrivatePayment) {
+        let signature = pendingPrivateSignature
+        if (!signature) {
+          signature = await payPrivateInvoice({
+            wallet: walletContext,
+            recipientAddress: invoice.recipientAddress,
+            mint: invoice.mint,
+            amountAtomic: BigInt(invoice.amountAtomic),
+            onStatus: (message) => {
+              paymentPhase = message
+            },
+          })
+          setPendingPrivateSignature(signature)
+        }
+
+        paymentPhase = 'Confirming the private payment with Veil'
+        const confirmedInvoice = await api<InvoiceData>(`/v1/payments/intents/${invoice.id}/confirm-fund`, {
+          method: 'POST',
+          body: JSON.stringify({ signature }),
+        })
+        setConfirmedSignature(null)
+        setInvoice({ ...invoice, ...confirmedInvoice, status: 'funded', fundSignature: null })
+        setPendingPrivateSignature(null)
+        return
+      }
+
       let pending = pendingTransaction
       if (!pending) {
         const rpcEndpoint = safeRpcEndpoint(connection.rpcEndpoint)
@@ -742,6 +780,13 @@ export default function Checkout() {
   const wholeNgnEligible = Boolean(
     invoice.amount_ngn && /^\d+$/.test(invoice.amount_ngn) && Number(invoice.amount_ngn) >= 1,
   )
+  const bankTransferAvailable = Boolean(
+    invoice.fiatCheckout ||
+      (invoice.allowFiatCheckout !== false &&
+        invoice.receiveMode !== 'private' &&
+        wholeNgnEligible &&
+        invoice.settlementTarget !== 'fiat'),
+  )
   const headerTokenAmount = pajOrder?.tokenAmount ?? displayAmount
   const headerTokenSymbol = pajOrder?.tokenSymbol ?? token.symbol
 
@@ -811,7 +856,7 @@ export default function Checkout() {
             )}
           </div>
         )}
-        {(confirmedSignature || invoice.fundSignature) && (
+        {invoice.receiveMode !== 'private' && (confirmedSignature || invoice.fundSignature) && (
           <a
             href={solanaExplorerTxUrl(confirmedSignature || invoice.fundSignature || '')}
             target="_blank"
@@ -826,7 +871,9 @@ export default function Checkout() {
             ? 'This NGN bank transfer has been verified by FossaPay. You can safely close this page.'
             : pajOrder
               ? 'This on-chain transfer settles to the merchant’s Nigerian bank account via Paj Cash. You can safely close this page.'
-              : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
+              : invoice.receiveMode === 'private'
+                ? 'This payment was shielded using Umbra. You can safely close this page.'
+                : 'This payment was made with a standard on-chain transfer. You can safely close this page.'}
         </p>
       </CheckoutFrame>
     )
@@ -924,23 +971,24 @@ export default function Checkout() {
       )}
 
       <div
-        className="mt-5 grid grid-cols-2 gap-1 rounded-pill border border-primary/10 bg-background p-1"
+        className={`mt-5 grid ${bankTransferAvailable ? 'grid-cols-2' : 'grid-cols-1'} gap-1 rounded-pill border border-primary/10 bg-background p-1`}
         role="tablist"
         aria-label="Payment method"
       >
-        <button
-          type="button"
-          role="tab"
-          aria-selected={payMethod === 'bank'}
-          disabled={!wholeNgnEligible && !invoice.fiatCheckout}
-          onClick={() => setPayMethod('bank')}
-          className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed disabled:opacity-45 ${
-            payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
-          }`}
-        >
-          <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
-          Bank transfer
-        </button>
+        {bankTransferAvailable && (
+          <button
+            type="button"
+            role="tab"
+            aria-selected={payMethod === 'bank'}
+            onClick={() => setPayMethod('bank')}
+            className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+              payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+            }`}
+          >
+            <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
+            Bank transfer
+          </button>
+        )}
         <button
           type="button"
           role="tab"
@@ -1146,8 +1194,9 @@ export default function Checkout() {
                   ? <ShieldCheck className="mt-0.5 shrink-0 text-amber-600" size={17} />
                   : <GlobeHemisphereWest className="mt-0.5 shrink-0 text-primary" size={17} />}
                 <p>
-                  This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.
-                  {invoice.receiveMode === 'private' && ' Funds are sent to the configured private receiving address, but the transfer remains publicly visible on Solana.'}
+                  {invoice.receiveMode === 'private'
+                    ? 'This payment is shielded via Umbra. Your wallet and payment details are not publicly linked to the merchant. The sender wallet and amount remain visible in the Umbra deposit transaction.'
+                    : 'This payment is sent as a standard on-chain transfer. Transaction details are visible on the blockchain.'}
                 </p>
               </div>
             </div>
@@ -1155,8 +1204,8 @@ export default function Checkout() {
 
           {paymentError && (
             <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
-              {pendingTransaction
-                ? `Transfer sent (${truncateAddress(pendingTransaction.signature)}), but confirmation is pending. Retry to finish confirmation. `
+              {pendingTransaction || pendingPrivateSignature
+                ? 'Payment sent, but confirmation is pending. Retry to finish confirmation. '
                 : ''}
               {paymentError}
               {IS_DEVNET && paymentError.includes('No USDC token account') && (
@@ -1193,12 +1242,12 @@ export default function Checkout() {
                 loading={paying}
                 onClick={() => void handlePay()}
                 disabled={
-                  (expired && !pendingTransaction) ||
+                  (expired && !pendingTransaction && !pendingPrivateSignature) ||
                   (isFiatSettlement &&
                     (NETWORK !== 'mainnet-beta' || (pajTokenChoice === 'CUSTOM' && !customMint.trim())))
                 }
               >
-                {pendingTransaction
+                {pendingTransaction || pendingPrivateSignature
                   ? 'Retry payment confirmation'
                   : isFiatSettlement
                     ? matchesQuote && pajOrder?.tokenAmount

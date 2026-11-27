@@ -22,6 +22,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DemoLinkResponse | null>(null)
+  const [resultWalletAddress, setResultWalletAddress] = useState<string | null>(null)
   const walletLinked = status === 'authenticated' && Boolean(user?.address)
 
   useEffect(() => {
@@ -36,6 +37,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
     setPhone('')
     setError(null)
     setResult(null)
+    setResultWalletAddress(null)
   }, [open])
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -48,10 +50,11 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
         method: 'POST',
         body: JSON.stringify({ phone: `+234${nationalNumber}` }),
       })
+      setResultWalletAddress(walletLinked ? user?.address ?? null : null)
       setResult(response)
     } catch (err) {
       if (err instanceof ApiError && err.status === 401) {
-        setError('Your wallet session expired. Reconnect your wallet and try again.')
+        setError('Your wallet session could not be verified. Reconnect it, or retry without a wallet.')
       } else if (err instanceof ApiError && err.status === 403) {
         setError('Demo access is currently unavailable. Please try again later.')
       } else if (err instanceof ApiError && err.status === 422) {
@@ -88,7 +91,9 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
             </span>
             <div>
               <h2 id="whatsapp-demo-title" className="text-xl font-semibold text-primary">Try it on WhatsApp</h2>
-              <p className="mt-1 text-sm text-foreground/60">Connect the wallet that should receive demo payments, then get the bot link.</p>
+              <p className="mt-1 text-sm text-foreground/60">
+                Try the demo with Veil’s shared wallet, or connect yours so checkout links pay you.
+              </p>
             </div>
           </div>
           <button
@@ -106,10 +111,14 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
             <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
               <CheckCircle size={19} weight="fill" aria-hidden="true" /> You’re ready to try the demo.
             </p>
-            {walletLinked && user?.address && (
+            {resultWalletAddress ? (
               <p className="rounded-card bg-primary/5 px-3 py-2 text-xs text-primary">
                 Checkout links from this number pay your wallet{' '}
-                <span className="font-mono" title={user.address}>{truncateAddress(user.address)}</span>.
+                <span className="font-mono" title={resultWalletAddress}>{truncateAddress(resultWalletAddress)}</span>.
+              </p>
+            ) : (
+              <p className="rounded-card bg-primary/5 px-3 py-2 text-xs text-primary">
+                Without a connected wallet, checkout links from this number pay Veil’s shared demo wallet, not you.
               </p>
             )}
             <ol className="space-y-3">
@@ -148,7 +157,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                   </span>
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-primary">
-                      {walletLinked ? 'Receiving wallet linked' : 'Link your receiving wallet'}
+                      {walletLinked ? 'Personal receiving wallet' : 'Wallet optional'}
                     </p>
                     <p
                       className="truncate font-mono text-xs text-foreground/60"
@@ -156,7 +165,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                     >
                       {walletLinked
                         ? truncateAddress(user?.address ?? '')
-                        : 'Demo payments go to the wallet you sign in with.'}
+                        : 'Without one, demo payments go to Veil’s shared demo wallet.'}
                     </p>
                   </div>
                 </div>
@@ -172,7 +181,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
               </div>
               {!walletLinked && (
                 <Button type="button" className="mt-3" fullWidth onClick={openAuthModal}>
-                  Connect wallet
+                  Connect wallet (optional)
                 </Button>
               )}
             </div>
@@ -195,8 +204,8 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
               />
             </div>
             {error && <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
-            <Button type="submit" fullWidth size="lg" loading={loading} disabled={!walletLinked}>
-              {walletLinked ? 'Get demo link' : 'Connect wallet to continue'}
+            <Button type="submit" fullWidth size="lg" loading={loading}>
+              Get demo link
             </Button>
           </form>
         )}
