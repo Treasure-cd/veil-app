@@ -1,7 +1,7 @@
 from datetime import datetime, timezone
 from uuid import UUID
 
-from sqlalchemy import Column, DateTime, String
+from sqlalchemy import Column, DateTime, String, Text
 from sqlmodel import Field, SQLModel
 
 
@@ -33,6 +33,8 @@ class WhatsAppMessage(SQLModel, table=True):
 
     message_sid: str = Field(primary_key=True)
     received_at: datetime = Field(default_factory=utc_now, sa_column=Column(DateTime(timezone=True), nullable=False))
+    reply_text: str | None = Field(default=None, sa_column=Column(Text, nullable=True))
+    replied_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
 
 
 class WhatsAppLinkCode(SQLModel, table=True):

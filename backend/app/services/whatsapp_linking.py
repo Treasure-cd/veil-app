@@ -20,27 +20,23 @@ CODE_LETTERS = "ABCDEFGHJKLMNPQRSTUVWXYZ"
 
 
 def whatsapp_url(text: str) -> str:
-    sender = settings.TWILIO_WHATSAPP_FROM or ""
-    digits = "".join(character for character in sender if character.isdigit())
-    if not digits or not settings.TWILIO_SANDBOX_JOIN_CODE:
+    business_phone = settings.WHATSAPP_BUSINESS_PHONE_NUMBER or ""
+    digits = "".join(character for character in business_phone if character.isdigit())
+    if not digits:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp Sandbox join settings are not configured",
+            detail="WhatsApp business phone number is not configured",
         )
-    return f"https://wa.me/{digits}?text={quote(text, safe='')}"
+    url = f"https://wa.me/{digits}"
+    return f"{url}?text={quote(text, safe='')}" if text else url
 
 
 def join_url() -> str:
-    if not settings.TWILIO_SANDBOX_JOIN_CODE:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="WhatsApp Sandbox join settings are not configured",
-        )
-    return whatsapp_url(settings.TWILIO_SANDBOX_JOIN_CODE)
+    return whatsapp_url("")
 
 
 async def create_link_code(db: AsyncSession, merchant_id: UUID) -> tuple[str, datetime]:
-    # Validate the sandbox destination before persisting a code that cannot be used.
+    # Validate the business number before persisting a code that cannot be used.
     join_url()
     expires_at = datetime.now(timezone.utc) + timedelta(minutes=10)
     for _ in range(5):

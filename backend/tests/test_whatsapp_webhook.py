@@ -1,7 +1,9 @@
+import hashlib
+import hmac
+import json
 import os
 import unittest
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
 
@@ -11,11 +13,11 @@ os.environ.setdefault("FOSSAPAY_API_KEY", "fk_test_key")
 os.environ.setdefault("FOSSAPAY_SECRET", "test_secret")
 os.environ.setdefault("FOSSAPAY_WEBHOOK_SECRET", "whsec_test_secret")
 
+import httpx
 from fastapi.testclient import TestClient
 from solders.pubkey import Pubkey
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlmodel import SQLModel
-from twilio.request_validator import RequestValidator
 
 import app.models  # noqa: F401
 from app.models.payment import PaymentIntent
@@ -25,6 +27,9 @@ from app.routers.whatsapp import _send_whatsapp
 from core.config import settings
 from core.session import get_session
 from main import app
+
+
+APP_SECRET = "test-meta-app-secret"
 
 
 class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
@@ -57,63 +62,43 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         app.dependency_overrides.clear()
         await self.engine.dispose()
 
-    async def test_invalid_twilio_signature_is_logged(self) -> None:
-        with (
-            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
-            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
-            patch.object(
-                settings,
-                "WEBHOOK_PUBLIC_URL",
-                "https://api.example.test/v1/whatsapp/webhook",
-            ),
-            patch("app.routers.whatsapp.logger") as logger,
-        ):
-            response = self.client.post(
-                "/v1/whatsapp/webhook",
-                data={"From": "whatsapp:+2348012345678", "Body": "help"},
-                headers={"X-Twilio-Signature": "invalid"},
-            )
+    def _payload(self, text: str, message_id: str) -> dict:
+        return {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "2348012345678",
+                                        "id": message_id,
+                                        "type": "text",
+                                        "text": {"body": text},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+        }
 
-        self.assertEqual(response.status_code, 403)
-        logger.warning.assert_called_once_with("Twilio WhatsApp signature validation failed")
-        self.assertNotIn("<Message>", response.text)
-
-    async def test_whatsapp_sender_uses_twilio_rest_api(self) -> None:
-        with (
-            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
-            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
-            patch.object(settings, "TWILIO_CONTENT_SID", None),
-            patch("app.routers.whatsapp.Client") as twilio_client,
-        ):
-            _send_whatsapp("+2348012345678", "whatsapp:+17372212163", "Hello")
-
-        twilio_client.assert_called_once_with("AC-test-account", "test-twilio-token")
-        twilio_client.return_value.messages.create.assert_called_once_with(
-            from_="whatsapp:+17372212163",
-            to="whatsapp:+2348012345678",
-            body="Hello",
+    def _post_signed_payload(self, payload: dict, secret: str = APP_SECRET):
+        body = json.dumps(payload).encode()
+        signature = hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()
+        return self.client.post(
+            "/v1/whatsapp/webhook",
+            content=body,
+            headers={
+                "Content-Type": "application/json",
+                "X-Hub-Signature-256": f"sha256={signature}",
+            },
         )
 
-    async def test_whatsapp_sender_can_use_content_template(self) -> None:
-        with (
-            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
-            patch.object(settings, "TWILIO_AUTH_TOKEN", "test-twilio-token"),
-            patch.object(settings, "TWILIO_CONTENT_SID", "HX-test-template"),
-            patch("app.routers.whatsapp.Client") as twilio_client,
-        ):
-            _send_whatsapp("+2348012345678", "whatsapp:+17372212163", "Hello")
-
-        twilio_client.return_value.messages.create.assert_called_once_with(
-            from_="whatsapp:+17372212163",
-            to="whatsapp:+2348012345678",
-            content_sid="HX-test-template",
-            content_variables='{"1": "Hello"}',
-        )
-
-    async def test_twilio_form_message_returns_configured_checkout_link(self) -> None:
-        auth_token = "test-twilio-token"
-        webhook_url = "https://api.example.test/v1/whatsapp/webhook"
-        intent = PaymentIntent(
+    def _payment_intent(self, *, receive_mode: str, allow_fiat_checkout: bool) -> PaymentIntent:
+        return PaymentIntent(
             id=uuid4(),
             user_id=self.user.id,
             merchant_ref="WhatsApp payment",
@@ -123,106 +108,208 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
             rate_ngn_per_token="1500",
             expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
             recipient_address=self.user.address,
-            receive_mode="public",
-            allow_fiat_checkout=True,
+            receive_mode=receive_mode,
+            allow_fiat_checkout=allow_fiat_checkout,
             memo="lunch",
         )
-        form = {
-            "From": "whatsapp:+2348012345678",
-            "To": "whatsapp:+17372212163",
-            "Body": "5000 for lunch",
-            "MessageSid": "SM-test-whatsapp-checkout",
-        }
-        signature = RequestValidator(auth_token).compute_signature(webhook_url, form)
+
+    def test_meta_webhook_verification_returns_plain_text_challenge(self) -> None:
+        with patch.object(settings, "WHATSAPP_VERIFY_TOKEN", "test-verify-token"):
+            response = self.client.get(
+                "/v1/whatsapp/webhook",
+                params={
+                    "hub.mode": "subscribe",
+                    "hub.verify_token": "test-verify-token",
+                    "hub.challenge": "12345",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.headers["content-type"], "text/plain; charset=utf-8")
+        self.assertEqual(response.text, "12345")
+
+    def test_meta_webhook_verification_rejects_mismatched_token(self) -> None:
+        with patch.object(settings, "WHATSAPP_VERIFY_TOKEN", "expected-token"):
+            response = self.client.get(
+                "/v1/whatsapp/webhook",
+                params={
+                    "hub.mode": "subscribe",
+                    "hub.verify_token": "wrong-token",
+                    "hub.challenge": "12345",
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_post_rejects_invalid_meta_signature(self) -> None:
+        payload = self._payload("help", "wamid-invalid-signature")
+        body = json.dumps(payload).encode()
+
+        with patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET):
+            response = self.client.post(
+                "/v1/whatsapp/webhook",
+                content=body,
+                headers={
+                    "Content-Type": "application/json",
+                    "X-Hub-Signature-256": "sha256=invalid",
+                },
+            )
+
+        self.assertEqual(response.status_code, 403)
+
+    def test_post_requires_meta_app_secret(self) -> None:
+        with patch.object(settings, "WHATSAPP_APP_SECRET", None):
+            response = self._post_signed_payload(self._payload("help", "wamid-no-secret"))
+
+        self.assertEqual(response.status_code, 503)
+
+    async def test_sender_uses_meta_graph_api(self) -> None:
+        with (
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch("app.routers.whatsapp.httpx.AsyncClient") as async_client,
+        ):
+            post = AsyncMock(
+                return_value=httpx.Response(
+                    200,
+                    json={"messages": [{"id": "wamid-out"}]},
+                    request=httpx.Request(
+                        "POST",
+                        "https://graph.facebook.com/v26.0/123456789/messages",
+                    ),
+                )
+            )
+            async_client.return_value.__aenter__.return_value.post = post
+
+            await _send_whatsapp("+2348012345678", "Hello")
+
+        post.assert_awaited_once_with(
+            "https://graph.facebook.com/v26.0/123456789/messages",
+            headers={
+                "Authorization": "Bearer test-access-token",
+                "Content-Type": "application/json",
+            },
+            json={
+                "messaging_product": "whatsapp",
+                "to": "2348012345678",
+                "type": "text",
+                "text": {"body": "Hello"},
+            },
+        )
+
+    async def test_sender_raises_when_meta_rejects_message(self) -> None:
+        with (
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch("app.routers.whatsapp.httpx.AsyncClient") as async_client,
+        ):
+            post = AsyncMock(
+                return_value=httpx.Response(
+                    500,
+                    json={"error": {"message": "temporary error"}},
+                    request=httpx.Request(
+                        "POST",
+                        "https://graph.facebook.com/v26.0/123456789/messages",
+                    ),
+                )
+            )
+            async_client.return_value.__aenter__.return_value.post = post
+
+            with self.assertRaises(httpx.HTTPStatusError):
+                await _send_whatsapp("+2348012345678", "Hello")
+
+    async def test_failed_send_is_retried_without_creating_another_payment(self) -> None:
+        payload = self._payload("5000 for lunch", "wamid-retry-send")
+        intent = self._payment_intent(receive_mode="public", allow_fiat_checkout=True)
 
         with (
-            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
-            patch.object(settings, "TWILIO_AUTH_TOKEN", auth_token),
-            patch.object(settings, "TWILIO_CONTENT_SID", None),
-            patch.object(settings, "WEBHOOK_PUBLIC_URL", webhook_url),
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
             patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
             patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
-            patch("app.routers.whatsapp._send_whatsapp") as send_reply,
+            patch(
+                "app.routers.whatsapp._send_whatsapp",
+                new=AsyncMock(side_effect=[RuntimeError("temporary send failure"), None]),
+            ) as send_reply,
             patch(
                 "app.routers.whatsapp.create_payment_intent",
                 new=AsyncMock(return_value=intent),
             ) as create_intent,
         ):
-            response = self.client.post(
-                "/v1/whatsapp/webhook",
-                data=form,
-                headers={"X-Twilio-Signature": signature},
-            )
+            failed_response = self._post_signed_payload(payload)
+            retry_response = self._post_signed_payload(payload)
+
+        self.assertEqual(failed_response.status_code, 503)
+        self.assertEqual(retry_response.status_code, 200)
+        self.assertEqual(send_reply.await_count, 2)
+        self.assertEqual(
+            send_reply.await_args_list[0].kwargs["body"],
+            send_reply.await_args_list[1].kwargs["body"],
+        )
+        create_intent.assert_awaited_once()
+
+    async def test_checkout_message_uses_meta_payload_and_deduplicates(self) -> None:
+        payload = self._payload("5000 for lunch", "wamid-meta-checkout")
+        intent = self._payment_intent(receive_mode="public", allow_fiat_checkout=True)
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
+            patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
+            patch(
+                "app.routers.whatsapp._send_whatsapp",
+                new=AsyncMock(),
+            ) as send_reply,
+            patch(
+                "app.routers.whatsapp.create_payment_intent",
+                new=AsyncMock(return_value=intent),
+            ) as create_intent,
+        ):
+            response = self._post_signed_payload(payload)
+            duplicate_response = self._post_signed_payload(payload)
 
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.headers["content-type"], "application/xml")
-        self.assertNotIn("<Message>", response.text)
-        send_reply.assert_called_once()
-        self.assertEqual(send_reply.call_args.kwargs["to_number"], form["From"])
-        self.assertEqual(send_reply.call_args.kwargs["from_number"], form["To"])
-        self.assertIn(
-            f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}",
-            send_reply.call_args.kwargs["body"],
-        )
-        self.assertIn("Checkout link:", send_reply.call_args.kwargs["body"])
+        self.assertEqual(duplicate_response.status_code, 200)
+        send_reply.assert_awaited_once()
+        self.assertEqual(send_reply.await_args.kwargs["to_number"], "2348012345678")
+        self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}", send_reply.await_args.kwargs["body"])
+        self.assertIn("Checkout link:", send_reply.await_args.kwargs["body"])
         create_intent.assert_awaited_once()
         self.assertEqual(create_intent.await_args.kwargs["token"], "USDC")
         self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "public")
         self.assertTrue(create_intent.await_args.kwargs["allow_fiat_checkout"])
 
     async def test_vendor_can_request_private_crypto_only_checkout(self) -> None:
-        auth_token = "test-twilio-token"
-        webhook_url = "https://api.example.test/v1/whatsapp/webhook"
-        intent = PaymentIntent(
-            id=uuid4(),
-            user_id=self.user.id,
-            merchant_ref="WhatsApp payment",
-            mint=settings.USDC_MINT,
-            amount_atomic="1000000",
-            amount_ngn="5000",
-            rate_ngn_per_token="1500",
-            expires_at=datetime.now(timezone.utc) + timedelta(minutes=30),
-            recipient_address=self.user.address,
-            receive_mode="private",
-            allow_fiat_checkout=False,
-            memo="lunch",
+        payload = self._payload(
+            "5000 for lunch private crypto only",
+            "wamid-meta-private-crypto-only",
         )
-        form = {
-            "From": "whatsapp:+2348012345678",
-            "To": "whatsapp:+17372212163",
-            "Body": "5000 for lunch private crypto only",
-            "MessageSid": "SM-test-whatsapp-private-crypto-only",
-        }
-        signature = RequestValidator(auth_token).compute_signature(webhook_url, form)
+        intent = self._payment_intent(receive_mode="private", allow_fiat_checkout=False)
 
         with (
-            patch.object(settings, "TWILIO_ACCOUNT_SID", "AC-test-account"),
-            patch.object(settings, "TWILIO_AUTH_TOKEN", auth_token),
-            patch.object(settings, "TWILIO_CONTENT_SID", None),
-            patch.object(settings, "WEBHOOK_PUBLIC_URL", webhook_url),
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
             patch.object(settings, "WHATSAPP_PAYMENT_METHODS", "usdc,fossapay"),
             patch.object(settings, "WHATSAPP_PRIVATE_PAYMENTS", False),
-            patch("app.routers.whatsapp._send_whatsapp") as send_reply,
+            patch(
+                "app.routers.whatsapp._send_whatsapp",
+                new=AsyncMock(),
+            ) as send_reply,
             patch(
                 "app.routers.whatsapp.create_payment_intent",
                 new=AsyncMock(return_value=intent),
             ) as create_intent,
         ):
-            response = self.client.post(
-                "/v1/whatsapp/webhook",
-                data=form,
-                headers={"X-Twilio-Signature": signature},
-            )
+            response = self._post_signed_payload(payload)
 
         self.assertEqual(response.status_code, 200)
-        self.assertNotIn("<Message>", response.text)
-        send_reply.assert_called_once()
-        self.assertEqual(send_reply.call_args.kwargs["from_number"], form["To"])
-        self.assertIn("private USDC only", send_reply.call_args.kwargs["body"])
-        self.assertIn(
-            f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}",
-            send_reply.call_args.kwargs["body"],
-        )
+        send_reply.assert_awaited_once()
+        self.assertIn("private USDC only", send_reply.await_args.kwargs["body"])
+        self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}", send_reply.await_args.kwargs["body"])
         create_intent.assert_awaited_once()
         self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "private")
         self.assertFalse(create_intent.await_args.kwargs["allow_fiat_checkout"])

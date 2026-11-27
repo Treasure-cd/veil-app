@@ -210,9 +210,9 @@ function Settings() {
           ) : linkInfo ? (
             <div className="mt-6 space-y-5">
               <div className="rounded-card border border-primary/10 p-4">
-                <p className="text-sm font-semibold text-primary">1. Join the bot</p>
+                <p className="text-sm font-semibold text-primary">1. Open Veil on WhatsApp</p>
                 <p className="mt-1 text-sm leading-relaxed text-foreground/60">
-                  This is a one-time step to join the WhatsApp sandbox.
+                  Start a chat with Veil's WhatsApp business number.
                 </p>
                 <a
                   href={linkInfo.join_url}
@@ -220,7 +220,7 @@ function Settings() {
                   rel="noreferrer"
                   className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary-action px-4 text-sm font-medium text-white hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
-                  Join the bot
+                  Open WhatsApp
                 </a>
               </div>
 

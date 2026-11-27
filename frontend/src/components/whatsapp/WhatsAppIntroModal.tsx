@@ -12,7 +12,7 @@ const STEPS = [
   {
     icon: WhatsappLogo,
     title: 'Join the bot',
-    detail: 'A one-time step to add the Veil sandbox to WhatsApp.',
+    detail: "A one-time step to open Veil's WhatsApp business chat.",
   },
   {
     icon: ChatCircleText,

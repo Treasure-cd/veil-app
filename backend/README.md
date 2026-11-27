@@ -33,28 +33,29 @@ Configure these variables in the FastAPI Cloud app settings before deployment:
 - `SOLANA_NETWORK`, `SOLANA_RPC_URL`, `USDC_MINT`, and `SOL_MINT`: configure the API's Solana cluster and token mints. Defaults are Mainnet (`mainnet-beta`, `EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v`); setting `SOLANA_NETWORK=devnet` automatically selects the Devnet RPC and Devnet USDC mint unless explicitly overridden.
 - `RATE_NGN_PER_SOL` and `RATE_NGN_PER_USDC`: optional fallback values if CoinGecko is unavailable.
 - `WASENDER_API_KEY`: optional, required only for the WhatsApp integration.
+- `WHATSAPP_VERIFY_TOKEN`: required for Meta's webhook GET verification; use the same value in Meta and FastAPI Cloud.
+- `WHATSAPP_APP_SECRET`: Meta app secret used to validate signed webhook POSTs.
+- `WHATSAPP_ACCESS_TOKEN` and `WHATSAPP_PHONE_NUMBER_ID`: credentials for sending WhatsApp replies through Meta's Graph API.
+- `WHATSAPP_BUSINESS_PHONE_NUMBER`: the WhatsApp business number in international format, used to create `wa.me` links for account linking.
 - `WHATSAPP_PAYMENT_METHODS`: `usdc,fossapay` (default) or `usdc`. FossaPay bank transfer requires a whole-naira amount.
 - `WHATSAPP_PRIVATE_PAYMENTS`: defaults to `false`; set to `true` for private USDC checkout links. Private links cannot also offer FossaPay.
 
-### Twilio WhatsApp webhook
+### Meta WhatsApp Cloud API webhook
 
-In Twilio's WhatsApp Sandbox settings, set **When a message comes in** to:
+In the Meta app's WhatsApp webhook configuration, set the callback URL to:
 
 ```text
 https://veil-3998494c.fastapicloud.dev/v1/whatsapp/webhook
 ```
 
-Select **HTTP POST**. Set `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` in
-FastAPI Cloud, and set `WEBHOOK_PUBLIC_URL` to that exact URL, including
-`/v1/whatsapp/webhook`; Twilio signatures are checked against it. The bot sends
-replies through Twilio's REST API using the inbound webhook's `To` number as
-the sender, and returns an empty TwiML response. `TWILIO_WHATSAPP_FROM` is used
-for generating Sandbox join links, not for webhook replies. If Twilio requires
-a pre-approved WhatsApp template (for example, outside the 24-hour customer
-service window), set `TWILIO_CONTENT_SID` to its `HX...` Content SID; the
-template must contain a `{{1}}` variable for the reply text. Ensure
-`FRONTEND_URL` points to the deployed Veil frontend so checkout links open the
-correct page.
+Subscribe to the `messages` field and configure the same
+`WHATSAPP_VERIFY_TOKEN` in Meta and FastAPI Cloud. Set `WHATSAPP_APP_SECRET`,
+`WHATSAPP_ACCESS_TOKEN`, `WHATSAPP_PHONE_NUMBER_ID`, and
+`WHATSAPP_BUSINESS_PHONE_NUMBER` in FastAPI Cloud. The GET route verifies
+Meta's challenge; POST requests are accepted only when
+their `X-Hub-Signature-256` matches the configured app secret. Replies are sent
+through Meta's Graph API. Ensure `FRONTEND_URL` points to the deployed Veil
+frontend so checkout links open the correct page.
 
 Vendors can use the default public USDC + bank-transfer checkout, or add
 `private` and/or `crypto only` to a request, for example

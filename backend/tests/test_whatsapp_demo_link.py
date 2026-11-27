@@ -54,8 +54,7 @@ class WhatsAppDemoLinkTests(unittest.IsolatedAsyncioTestCase):
             patch.object(
                 settings, "WHATSAPP_DEMO_MERCHANT_WALLET", self.demo_wallet.address
             ),
-            patch.object(settings, "TWILIO_WHATSAPP_FROM", "whatsapp:+14155238886"),
-            patch.object(settings, "TWILIO_SANDBOX_JOIN_CODE", "join sandbox-test"),
+            patch.object(settings, "WHATSAPP_BUSINESS_PHONE_NUMBER", "+14155238886"),
         ):
             response = self.client.post(
                 "/v1/whatsapp/demo-link",
@@ -64,7 +63,7 @@ class WhatsAppDemoLinkTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            "https://wa.me/14155238886?text=join%20sandbox-test",
+            "https://wa.me/14155238886",
             response.json()["join_url"],
         )
         async with self.session_factory() as db:
