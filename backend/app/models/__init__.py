@@ -9,4 +9,4 @@ from .payment import (
     PaymentIntent,
 )
 from .payroll import PayrollGroup, PayrollLink
-from .whatsapp import WhatsAppLink, WhatsAppSession, WhatsAppMessage, WhatsAppLinkCode
+from .whatsapp import WhatsAppLink, WhatsAppSession, WhatsAppMessage, WhatsAppLinkCode, WhatsAppSetupToken

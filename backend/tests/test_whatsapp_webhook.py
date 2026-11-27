@@ -22,8 +22,10 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401
 from app.models.payment import PaymentIntent
 from app.models.user import User
-from app.models.whatsapp import WhatsAppLink
+from app.models.whatsapp import WhatsAppLink, WhatsAppSetupToken
+from app.routers.auth import create_jwt_token
 from app.routers.whatsapp import _send_whatsapp
+from app.services.whatsapp_linking import _graph_phone_cache
 from core.config import settings
 from core.session import get_session
 from main import app
@@ -34,6 +36,7 @@ APP_SECRET = "test-meta-app-secret"
 
 class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
+        _graph_phone_cache.clear()
         self.engine = create_async_engine(
             "sqlite+aiosqlite:///:memory:",
             connect_args={"check_same_thread": False},
@@ -313,6 +316,255 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         create_intent.assert_awaited_once()
         self.assertEqual(create_intent.await_args.kwargs["receive_mode"], "private")
         self.assertFalse(create_intent.await_args.kwargs["allow_fiat_checkout"])
+
+    def _auth_headers(self, user: User) -> dict[str, str]:
+        token = create_jwt_token(str(user.id), user.address)
+        return {"Authorization": f"Bearer {token}"}
+
+    async def test_unlinked_inbound_message_sends_setup_tracking_link_and_completes_setup(self) -> None:
+        unlinked_from = "2348099998888"
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": unlinked_from,
+                                        "id": "wamid-unlinked-first",
+                                        "type": "text",
+                                        "text": {"body": "hi"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+        }
+
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply,
+        ):
+            response = self._post_signed_payload(payload)
+
+        self.assertEqual(response.status_code, 200)
+        send_reply.assert_awaited_once()
+        reply_body = send_reply.await_args.kwargs["body"]
+        prefix = f"{settings.FRONTEND_URL.rstrip('/')}/settings?whatsapp_setup="
+        self.assertIn(prefix, reply_body)
+        setup_token = reply_body.split(prefix, 1)[1].split()[0]
+
+        async with self.session_factory() as db:
+            new_merchant = User(address=str(Pubkey.new_unique()))
+            db.add(new_merchant)
+            await db.commit()
+            await db.refresh(new_merchant)
+
+        headers = self._auth_headers(new_merchant)
+        preview = self.client.get(f"/v1/whatsapp/setup/{setup_token}", headers=headers)
+        self.assertEqual(preview.status_code, 200)
+        self.assertEqual(preview.json()["phone_masked"], "+234••••••8888")
+        self.assertFalse(preview.json()["already_linked_to_current_user"])
+        self.assertFalse(preview.json()["already_linked_to_other_account"])
+
+        with (
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch("app.routers.whatsapp_accounts._send_whatsapp", new=AsyncMock()) as notify_reply,
+        ):
+            complete = self.client.post(
+                "/v1/whatsapp/setup/complete",
+                json={"token": setup_token},
+                headers=headers,
+            )
+
+        self.assertEqual(complete.status_code, 200)
+        self.assertTrue(complete.json()["ok"])
+        self.assertTrue(complete.json()["notified_whatsapp"])
+        self.assertEqual(complete.json()["phone_masked"], "+234••••••8888")
+        notify_reply.assert_awaited_once()
+        self.assertEqual(notify_reply.await_args.kwargs["to_number"], "+2348099998888")
+        self.assertIn("Your WhatsApp is now linked to", notify_reply.await_args.kwargs["body"])
+
+        status_resp = self.client.get("/v1/whatsapp/status", headers=headers)
+        self.assertEqual(status_resp.status_code, 200)
+        self.assertTrue(status_resp.json()["linked"])
+        self.assertEqual(status_resp.json()["phone_masked"], "+234••••••8888")
+
+        replay_preview = self.client.get(f"/v1/whatsapp/setup/{setup_token}", headers=headers)
+        self.assertEqual(replay_preview.status_code, 410)
+        replay_complete = self.client.post(
+            "/v1/whatsapp/setup/complete",
+            json={"token": setup_token},
+            headers=headers,
+        )
+        self.assertEqual(replay_complete.status_code, 410)
+
+    async def test_setup_completion_succeeds_when_whatsapp_notification_fails_and_rejects_expired(self) -> None:
+        async with self.session_factory() as db:
+            db.add(
+                WhatsAppSetupToken(
+                    token="valid-setup-tok",
+                    phone_e164="+2348077776666",
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                )
+            )
+            db.add(
+                WhatsAppSetupToken(
+                    token="expired-setup-tok",
+                    phone_e164="+2348077776666",
+                    expires_at=datetime.now(timezone.utc) - timedelta(minutes=1),
+                )
+            )
+            await db.commit()
+
+        headers = self._auth_headers(self.user)
+        expired_resp = self.client.get("/v1/whatsapp/setup/expired-setup-tok", headers=headers)
+        self.assertEqual(expired_resp.status_code, 410)
+
+        with (
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
+            patch(
+                "app.routers.whatsapp_accounts._send_whatsapp",
+                new=AsyncMock(side_effect=RuntimeError("meta unreachable")),
+            ),
+        ):
+            complete = self.client.post(
+                "/v1/whatsapp/setup/complete",
+                json={"token": "valid-setup-tok"},
+                headers=headers,
+            )
+
+        self.assertEqual(complete.status_code, 200)
+        self.assertTrue(complete.json()["ok"])
+        self.assertFalse(complete.json()["notified_whatsapp"])
+
+    async def test_link_code_returns_code_without_business_number_and_uses_graph_api_fallback(self) -> None:
+        headers = self._auth_headers(self.user)
+
+        with (
+            patch.object(settings, "WHATSAPP_BUSINESS_PHONE_NUMBER", None),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", None),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", None),
+        ):
+            no_number_resp = self.client.post("/v1/whatsapp/link-code", headers=headers)
+
+        self.assertEqual(no_number_resp.status_code, 200)
+        body = no_number_resp.json()
+        self.assertEqual(len(body["code"]), 6)
+        self.assertIsNone(body["join_url"])
+        self.assertIsNone(body["link_url"])
+
+        with (
+            patch.object(settings, "WHATSAPP_BUSINESS_PHONE_NUMBER", None),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "graph-token"),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "987654321"),
+            patch("app.services.whatsapp_linking.httpx.AsyncClient") as async_client,
+        ):
+            get_mock = AsyncMock(
+                return_value=httpx.Response(
+                    200,
+                    json={"id": "987654321", "display_phone_number": "+234 800 123 4567"},
+                    request=httpx.Request(
+                        "GET",
+                        "https://graph.facebook.com/v26.0/987654321",
+                    ),
+                )
+            )
+            async_client.return_value.__aenter__.return_value.get = get_mock
+            graph_resp = self.client.post("/v1/whatsapp/link-code", headers=headers)
+
+        self.assertEqual(graph_resp.status_code, 200)
+        graph_body = graph_resp.json()
+        self.assertEqual(graph_body["join_url"], "https://wa.me/2348001234567")
+        self.assertEqual(
+            graph_body["link_url"],
+            f"https://wa.me/2348001234567?text=link%20{graph_body['code']}",
+        )
+        get_mock.assert_awaited_once()
+
+    async def test_consuming_link_code_invalidates_pending_setup_tokens(self) -> None:
+        async with self.session_factory() as db:
+            other_user = User(address=str(Pubkey.new_unique()))
+            db.add(other_user)
+            db.add(
+                WhatsAppSetupToken(
+                    token="pending-tok-1",
+                    phone_e164="+2348055554444",
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                )
+            )
+            await db.commit()
+            await db.refresh(other_user)
+
+        other_headers = self._auth_headers(other_user)
+        with (
+            patch.object(settings, "WHATSAPP_BUSINESS_PHONE_NUMBER", None),
+            patch.object(settings, "WHATSAPP_ACCESS_TOKEN", None),
+            patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", None),
+        ):
+            code_resp = self.client.post("/v1/whatsapp/link-code", headers=other_headers)
+        self.assertEqual(code_resp.status_code, 200)
+        code = code_resp.json()["code"]
+
+        payload = {
+            "object": "whatsapp_business_account",
+            "entry": [
+                {
+                    "changes": [
+                        {
+                            "value": {
+                                "messages": [
+                                    {
+                                        "from": "2348055554444",
+                                        "id": "wamid-consume-code-1",
+                                        "type": "text",
+                                        "text": {"body": f"link {code}"},
+                                    }
+                                ]
+                            }
+                        }
+                    ]
+                }
+            ],
+        }
+        with (
+            patch.object(settings, "WHATSAPP_APP_SECRET", APP_SECRET),
+            patch("app.routers.whatsapp._send_whatsapp", new=AsyncMock()) as send_reply,
+        ):
+            webhook_resp = self._post_signed_payload(payload)
+
+        self.assertEqual(webhook_resp.status_code, 200)
+        self.assertIn("Your WhatsApp is now linked to", send_reply.await_args.kwargs["body"])
+        replay_setup = self.client.get("/v1/whatsapp/setup/pending-tok-1", headers=self._auth_headers(self.user))
+        self.assertEqual(replay_setup.status_code, 410)
+
+    async def test_setup_preview_flags_number_linked_to_other_account(self) -> None:
+        async with self.session_factory() as db:
+            other_user = User(address=str(Pubkey.new_unique()))
+            db.add(other_user)
+            db.add(
+                WhatsAppSetupToken(
+                    token="reassign-tok-1",
+                    phone_e164="+2348012345678",
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=10),
+                )
+            )
+            await db.commit()
+            await db.refresh(other_user)
+
+        other_headers = self._auth_headers(other_user)
+        preview = self.client.get("/v1/whatsapp/setup/reassign-tok-1", headers=other_headers)
+        self.assertEqual(preview.status_code, 200)
+        self.assertTrue(preview.json()["already_linked_to_other_account"])
+        self.assertFalse(preview.json()["already_linked_to_current_user"])
 
 
 if __name__ == "__main__":

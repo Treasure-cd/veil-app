@@ -44,3 +44,12 @@ class WhatsAppLinkCode(SQLModel, table=True):
     merchant_id: UUID = Field(foreign_key="user.id", index=True)
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     used_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+
+class WhatsAppSetupToken(SQLModel, table=True):
+    __tablename__ = "whatsapp_setup_tokens"
+
+    token: str = Field(primary_key=True, max_length=64)
+    phone_e164: str = Field(index=True)
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    used_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
