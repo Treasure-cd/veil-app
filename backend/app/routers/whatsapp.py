@@ -19,6 +19,7 @@ from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppMessage, WhatsAppSession
 from app.services.payment_intents import create_payment_intent
 from app.services.phone_numbers import normalize_phone_number
+from app.services.whatsapp_ai_parser import parse_message_with_gemini
 from app.services.whatsapp_linking import consume_link_code, create_setup_token
 from app.services.whatsapp_parser import parse_message
 from core.config import settings
@@ -172,21 +173,37 @@ async def _build_inbound_reply(
 
         session = await db.get(WhatsAppSession, phone)
         now = datetime.now(timezone.utc)
-        if session and now - session.updated_at > timedelta(minutes=5):
-            await db.delete(session)
-            await db.commit()
-            session = None
+        if session:
+            session_updated = (
+                session.updated_at.replace(tzinfo=timezone.utc)
+                if session.updated_at.tzinfo is None
+                else session.updated_at
+            )
+            if now - session_updated > timedelta(minutes=5):
+                await db.delete(session)
+                await db.commit()
+                session = None
+
+        awaiting_amount = bool(session and session.state == "awaiting_amount")
+        if parsed["intent"] == "fallback":
+            if awaiting_amount:
+                prefixed = parse_message(f"link {body}")
+                if prefixed["amount_ngn"] is not None or prefixed["amount_error"] is not None:
+                    parsed = prefixed
+            if parsed["intent"] == "fallback":
+                parsed = await parse_message_with_gemini(
+                    body,
+                    awaiting_amount=awaiting_amount,
+                )
 
         if parsed["intent"] == "menu":
             return MENU
         if parsed["intent"] == "recent_payments":
             return await _recent_payments(db, user.id)
-        if parsed["intent"] == "fallback" and (not session or session.state != "awaiting_amount"):
+        if parsed["intent"] == "fallback" and not awaiting_amount:
             return f"I'm here to help with payments. {MENU}"
 
-        if session and session.state == "awaiting_amount":
-            if parsed["intent"] != "create_link":
-                parsed = parse_message(f"link {body}")
+        if awaiting_amount and session is not None:
             if parsed["memo"] and session.draft_memo:
                 parsed["memo"] = f"{session.draft_memo} {parsed['memo']}"
             elif session.draft_memo:
