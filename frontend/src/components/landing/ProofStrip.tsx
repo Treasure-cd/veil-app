@@ -15,7 +15,7 @@ const BUILT_WITH = ['Solana', 'Umbra', 'Next.js', 'WhatsApp', 'Phantom', 'Solfla
 
 export default function ProofStrip() {
   return (
-    <section className="relative border-y border-foreground/5 bg-white/60 py-14 backdrop-blur">
+    <section className="relative border-y border-foreground/5 bg-surface/65 py-14 backdrop-blur dark:border-primary/10">
       <div className="mx-auto grid max-w-5xl grid-cols-2 gap-8 px-6 md:grid-cols-4">
         {FACTS.map((f, i) => (
           <motion.div

@@ -132,15 +132,15 @@ export function getFiatStatusPresentation(
 ): { label: string; className: string } {
   switch (status) {
     case 'completed':
-      return { label: 'Completed', className: 'bg-emerald-100 text-emerald-800' }
+      return { label: 'Completed', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' }
     case 'processing':
       return { label: 'Processing', className: 'bg-primary/10 text-primary' }
     case 'pending':
-      return { label: 'Awaiting transfer', className: 'bg-amber-100 text-amber-800' }
+      return { label: 'Awaiting transfer', className: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' }
     case 'expired':
       return { label: 'Expired', className: 'bg-foreground/10 text-foreground/70' }
     case 'reversed':
-      return { label: 'Reversed', className: 'bg-amber-100 text-amber-900' }
+      return { label: 'Reversed', className: 'bg-amber-100 text-amber-900 dark:bg-amber-500/15 dark:text-amber-200' }
     case 'failed':
       return {
         label: outcome === 'underpaid'
@@ -148,7 +148,7 @@ export function getFiatStatusPresentation(
           : outcome === 'overpaid'
             ? 'Overpaid'
             : 'Failed',
-        className: 'bg-red-100 text-red-700',
+        className: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
       }
   }
 }

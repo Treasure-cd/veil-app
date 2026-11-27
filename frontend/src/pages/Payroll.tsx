@@ -343,7 +343,7 @@ export default function Payroll() {
         </header>
 
         {error && (
-          <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700">
+          <div className="flex items-center gap-3 rounded-card bg-red-50 p-4 text-red-700 dark:bg-red-950/45 dark:text-red-300">
             <WarningCircle className="shrink-0" size={24} weight="fill" />
             <span className="min-w-0 break-words text-sm font-medium">{error}</span>
           </div>
@@ -355,7 +355,7 @@ export default function Payroll() {
           <div className="col-span-1 space-y-6 lg:col-span-2">
 
             {/* Settings Card */}
-            <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <section className="rounded-2xl border border-primary/10 bg-surface p-6 shadow-sm">
               <h2 className="mb-4 flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
                 <CalendarBlank size={20} /> Schedule & Currency
               </h2>
@@ -390,7 +390,7 @@ export default function Payroll() {
             </section>
 
             {/* Recipients Card */}
-            <section className="rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <section className="rounded-2xl border border-primary/10 bg-surface p-6 shadow-sm">
               <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                 <h2 className="flex items-center gap-2 text-lg font-semibold tracking-tight text-primary">
                   <Users size={20} /> Team Members
@@ -409,11 +409,11 @@ export default function Payroll() {
                 <div className="mb-6 overflow-hidden rounded-xl border border-emerald-500/20 bg-emerald-500/5">
                   <div className="flex min-w-0 flex-col gap-3 border-b border-emerald-500/10 p-3 sm:flex-row sm:items-center sm:justify-between sm:px-4">
                     <div className="flex min-w-0 flex-col">
-                      <span className="truncate text-sm font-semibold text-emerald-800">{csvFileName}</span>
-                      <span className="text-xs text-emerald-600/80">{csvValidCount} ready · {csvRows.length - csvValidCount} with errors</span>
+                      <span className="truncate text-sm font-semibold text-emerald-800 dark:text-emerald-300">{csvFileName}</span>
+                      <span className="text-xs text-emerald-600/80 dark:text-emerald-300/75">{csvValidCount} ready · {csvRows.length - csvValidCount} with errors</span>
                     </div>
                     <div className="flex shrink-0 items-center gap-3">
-                      <button onClick={() => { setCsvRows([]); setCsvFileName(null) }} className="text-xs font-medium text-emerald-700 hover:underline">Cancel</button>
+                      <button onClick={() => { setCsvRows([]); setCsvFileName(null) }} className="text-xs font-medium text-emerald-700 hover:underline dark:text-emerald-300">Cancel</button>
                       <Button size="sm" onClick={handleImportCsv} disabled={csvValidCount === 0} className="bg-emerald-600 hover:bg-emerald-700">
                         Import
                       </Button>
@@ -422,10 +422,10 @@ export default function Payroll() {
                   <div className="max-h-40 overflow-y-auto p-2">
                     {csvRows.map(row => (
                       <div key={row.rowNumber} title={row.errors.join(', ') || undefined} className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
-                        {row.errors.length ? <WarningCircle className="text-red-500" /> : <CheckCircle className="text-emerald-500" />}
+                        {row.errors.length ? <WarningCircle className="text-red-500 dark:text-red-400" /> : <CheckCircle className="text-emerald-500 dark:text-emerald-400" />}
                         <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
-                        <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800" />
-                        {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600">{row.errors.join(', ')}</span>}
+                        <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800 dark:text-emerald-300" />
+                        {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600 dark:text-red-400">{row.errors.join(', ')}</span>}
                       </div>
                     ))}
                   </div>
@@ -450,7 +450,7 @@ export default function Payroll() {
                           aria-label={`Recipient ${index + 1} name`}
                           value={recipient.name}
                           onChange={(e) => updateRecipient(recipient.id, 'name', e.target.value)}
-                          className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                          className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-surface px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
                         />
                         <input
                           type="text"
@@ -458,7 +458,7 @@ export default function Payroll() {
                           aria-label={`Recipient ${index + 1} Solana wallet address`}
                           value={recipient.address}
                           onChange={(e) => updateRecipient(recipient.id, 'address', e.target.value)}
-                          className="h-10 w-full min-w-0 flex-[1.5] rounded-lg border border-primary/10 bg-white px-3 text-sm font-mono focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                          className="h-10 w-full min-w-0 flex-[1.5] rounded-lg border border-primary/10 bg-surface px-3 text-sm font-mono focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
                         />
                         <div className="flex min-w-0 items-center gap-2 xl:w-44 xl:shrink-0">
                           <input
@@ -468,12 +468,12 @@ export default function Payroll() {
                             aria-label={`Recipient ${index + 1} amount in NGN`}
                             value={recipient.amount}
                             onChange={(e) => updateRecipient(recipient.id, 'amount', e.target.value)}
-                            className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-white px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
+                            className="h-10 w-full min-w-0 flex-1 rounded-lg border border-primary/10 bg-surface px-3 text-sm focus:border-primary/40 focus:outline-none focus:ring-1 focus:ring-primary/40"
                           />
                           <button
                             onClick={() => removeRecipient(recipient.id)}
                             aria-label={`Remove recipient ${index + 1}`}
-                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-foreground/40 transition-colors hover:bg-red-50 hover:text-red-500"
+                            className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg text-foreground/40 transition-colors hover:bg-red-50 hover:text-red-500 dark:hover:bg-red-950/40 dark:hover:text-red-400"
                           >
                             <Trash size={18} />
                           </button>
@@ -505,7 +505,7 @@ export default function Payroll() {
 
           {/* --- RIGHT COLUMN (Checkout / Summary) --- */}
           <div className="col-span-1">
-            <div className="sticky top-24 space-y-4 rounded-2xl border border-primary/10 bg-white p-6 shadow-sm">
+            <div className="sticky top-24 space-y-4 rounded-2xl border border-primary/10 bg-surface p-6 shadow-sm">
               <h3 className="text-lg font-semibold tracking-tight text-primary">Summary</h3>
 
               <div className="flex flex-col gap-3 py-4 text-sm text-foreground/70">
@@ -537,13 +537,13 @@ export default function Payroll() {
 
               {!publicKey ? (
                 <div className="mt-6 flex flex-col items-center gap-3">
-                  <p className="text-sm font-medium text-red-500">Wallet disconnected. Please reconnect to fund.</p>
-                  <WalletMultiButton className="!bg-primary hover:!bg-primary/90 !h-14 !w-full !rounded-lg !flex !justify-center !text-base !font-semibold" />
+                  <p className="text-sm font-medium text-red-500 dark:text-red-400">Wallet disconnected. Please reconnect to fund.</p>
+                  <WalletMultiButton className="!bg-primary-action hover:!bg-primary-action-hover !h-14 !w-full !rounded-lg !flex !justify-center !text-base !font-semibold" />
                 </div>
               ) : (
                 <>
                   {statusMessage && <p className="mt-4 text-center text-sm text-foreground/70" role="status">{statusMessage}</p>}
-                  {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700" role="status">Payroll group {successGroupId} funded and locked.</p>}
+                  {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700 dark:text-emerald-300" role="status">Payroll group {successGroupId} funded and locked.</p>}
                   {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting} onClick={handleRetryLock}>Retry locking payroll group</Button>}
                   <Button
                     size="lg"

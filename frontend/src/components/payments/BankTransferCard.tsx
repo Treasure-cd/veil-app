@@ -80,8 +80,8 @@ export function BankTransferCard({
 
       {isTerminalFailure ? (
         <div className="mt-4 space-y-3">
-          <div className="flex items-start gap-2.5 rounded-card border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900">
-            <WarningCircle size={18} weight="fill" className="mt-0.5 shrink-0 text-amber-600" />
+          <div className="flex items-start gap-2.5 rounded-card border border-amber-200 bg-amber-50 p-3 text-xs text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
+            <WarningCircle size={18} weight="fill" className="mt-0.5 shrink-0 text-amber-600 dark:text-amber-400" />
             <div className="space-y-1">
               <p className="font-semibold">
                 {checkout.status === 'expired'
@@ -92,7 +92,7 @@ export function BankTransferCard({
                       ? `Transfer ${checkout.paymentOutcome}: expected ${formatNgn(payable)}, received ${formatNgn(checkout.receivedAmount)}.`
                       : 'This bank transfer could not be completed.'}
               </p>
-              <p className="text-amber-800/80">
+              <p className="text-amber-800/80 dark:text-amber-200/80">
                 Do not transfer funds to this account number.
               </p>
             </div>
@@ -122,7 +122,7 @@ export function BankTransferCard({
         </div>
       ) : (
         <>
-          <div className="mt-4 rounded-card border border-primary/10 bg-white p-3.5">
+          <div className="mt-4 rounded-card border border-primary/10 bg-surface p-3.5">
             <div className="flex items-center justify-between gap-3">
               <div className="min-w-0">
                 <p className="text-xs font-medium text-foreground/55">Exact amount to send</p>
@@ -146,7 +146,7 @@ export function BankTransferCard({
             </div>
           </div>
 
-          <dl className="mt-3 space-y-2.5 rounded-card border border-primary/10 bg-white p-3.5 text-sm">
+          <dl className="mt-3 space-y-2.5 rounded-card border border-primary/10 bg-surface p-3.5 text-sm">
             <div className="flex items-center justify-between gap-3">
               <dt className="text-foreground/55">Bank</dt>
               <dd className="font-medium text-foreground">{checkout.bankName || '—'}</dd>

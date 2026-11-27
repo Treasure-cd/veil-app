@@ -51,8 +51,8 @@ function Bubble({ msg }: { msg: Msg }) {
       <div
         className={`max-w-[82%] px-3 pb-1.5 pt-2 text-[11.5px] leading-relaxed text-foreground shadow-[0_1px_2px_rgba(46,0,66,0.12)] ${
           isUser
-            ? 'rounded-[14px_3px_14px_14px] bg-[#ecdcfa]'
-            : 'rounded-[3px_14px_14px_14px] bg-white'
+            ? 'rounded-[14px_3px_14px_14px] bg-[#ecdcfa] dark:bg-[#4c1d7a]'
+            : 'rounded-[3px_14px_14px_14px] bg-surface'
         }`}
       >
         {msg.from === 'user' && msg.kind === 'text' && (
@@ -98,7 +98,7 @@ function Bubble({ msg }: { msg: Msg }) {
 function Typing() {
   return (
     <motion.div layout {...bubbleIn} className="flex justify-start">
-      <div className="flex items-center gap-1 rounded-[3px_14px_14px_14px] bg-white px-3 py-2.5 shadow-[0_1px_2px_rgba(46,0,66,0.12)]">
+      <div className="flex items-center gap-1 rounded-[3px_14px_14px_14px] bg-surface px-3 py-2.5 shadow-[0_1px_2px_rgba(46,0,66,0.12)]">
         {[0, 1, 2].map((d) => (
           <motion.span
             key={d}
@@ -149,7 +149,7 @@ export default function WhatsAppMockup() {
       </div>
 
       {/* header */}
-      <div className="flex items-center gap-3 bg-secondary px-4 py-3">
+      <div className="flex items-center gap-3 bg-[#2e0042] px-4 py-3">
         <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-white/15">
           <Logo color="white" alt="" className="h-2" />
         </span>
@@ -160,7 +160,7 @@ export default function WhatsAppMockup() {
       </div>
 
       {/* chat */}
-      <div className="flex h-[340px] flex-col justify-end gap-2 overflow-hidden bg-[#f3ecf8] p-2.5">
+      <div className="flex h-[340px] flex-col justify-end gap-2 overflow-hidden bg-[#f3ecf8] p-2.5 dark:bg-[#120a1c]">
         <AnimatePresence initial={false}>
           {MESSAGES.slice(0, count).map((m) => (
             <Bubble key={m.id} msg={m} />
@@ -170,12 +170,12 @@ export default function WhatsAppMockup() {
       </div>
 
       {/* input */}
-      <div className="flex items-center gap-2 bg-[#ece4f2] p-2.5">
-        <div className="flex flex-1 items-center justify-between rounded-full bg-white px-3.5 py-2 text-[10.5px] text-foreground/40">
+      <div className="flex items-center gap-2 bg-[#ece4f2] p-2.5 dark:bg-[#1b1029]">
+        <div className="flex flex-1 items-center justify-between rounded-full bg-surface px-3.5 py-2 text-[10.5px] text-foreground/40">
           Message
           <Microphone size={13} />
         </div>
-        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary text-white">
+        <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-primary-action text-white">
           <PaperPlaneRight size={14} weight="fill" />
         </span>
       </div>

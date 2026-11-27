@@ -122,7 +122,7 @@ function Settings() {
         <p className="mt-1 text-sm text-foreground/60">Manage your account connections.</p>
       </header>
 
-      <section aria-labelledby="whatsapp-settings-title" className="rounded-panel border border-primary/10 bg-white p-5 sm:p-6">
+      <section aria-labelledby="whatsapp-settings-title" className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex size-11 shrink-0 items-center justify-center rounded-card bg-primary/10 text-primary">
@@ -153,15 +153,15 @@ function Settings() {
         </div>
 
         {statusError && (
-          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card bg-red-50 px-4 py-3">
-            <p role="alert" className="text-sm text-red-700">{statusError}</p>
-            <button type="button" className="text-sm font-medium text-red-700 underline" onClick={() => void refreshStatus()}>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-3 rounded-card bg-red-50 px-4 py-3 dark:bg-red-950/45">
+            <p role="alert" className="text-sm text-red-700 dark:text-red-300">{statusError}</p>
+            <button type="button" className="text-sm font-medium text-red-700 underline dark:text-red-300" onClick={() => void refreshStatus()}>
               Try again
             </button>
           </div>
         )}
         {linkError && !linkDialogOpen && (
-          <p role="alert" className="mt-3 text-sm text-red-700">{linkError}</p>
+          <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{linkError}</p>
         )}
       </section>
 
@@ -178,7 +178,7 @@ function Settings() {
         onClick={(event) => {
           if (event.target === event.currentTarget) setLinkDialogOpen(false)
         }}
-        className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-panel bg-white p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-panel"
+        className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-lg overflow-y-auto rounded-panel border border-primary/10 bg-surface p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-panel dark:backdrop:bg-black/65"
       >
         <div className="p-5 sm:p-7">
           <div className="flex items-start justify-between gap-4">
@@ -203,7 +203,7 @@ function Settings() {
           </div>
 
           {linkStep === 'success' ? (
-            <div className="mt-6 rounded-card bg-emerald-50 p-4 text-emerald-800" role="status">
+            <div className="mt-6 rounded-card bg-emerald-50 p-4 text-emerald-800 dark:bg-emerald-950/45 dark:text-emerald-300" role="status">
               <p className="flex items-center gap-2 font-medium"><CheckCircle size={20} weight="fill" /> Successfully linked</p>
               <Button className="mt-4" onClick={() => setLinkDialogOpen(false)}>Done</Button>
             </div>
@@ -218,7 +218,7 @@ function Settings() {
                   href={linkInfo.join_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary px-4 text-sm font-medium text-white hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="mt-3 inline-flex h-10 items-center justify-center rounded-sm bg-primary-action px-4 text-sm font-medium text-white hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   Join the bot
                 </a>
@@ -243,26 +243,26 @@ function Settings() {
                       href={linkInfo.link_url}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex h-10 w-full items-center justify-center rounded-sm border border-primary/20 bg-white px-4 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                      className="inline-flex h-10 w-full items-center justify-center rounded-sm border border-primary/20 bg-surface px-4 text-sm font-medium text-primary hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                     >
                       Send link code
                     </a>
                   </>
                 ) : (
                   <div className="mt-4">
-                    <p role="alert" className="text-sm text-red-700">This code has expired. Create a new code to continue.</p>
+                    <p role="alert" className="text-sm text-red-700 dark:text-red-300">This code has expired. Create a new code to continue.</p>
                     <Button className="mt-3" loading={linkLoading} onClick={() => void issueLinkCode()}>
                       Generate a new code
                     </Button>
                   </div>
                 )}
               </div>
-              {linkError && <p role="alert" className="text-sm text-red-700">{linkError}</p>}
+              {linkError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{linkError}</p>}
             </div>
           ) : (
             <div className="mt-6 space-y-3">
               <p className="text-sm text-foreground/60">Preparing your secure link code…</p>
-              {linkError && <p role="alert" className="text-sm text-red-700">{linkError}</p>}
+              {linkError && <p role="alert" className="text-sm text-red-700 dark:text-red-300">{linkError}</p>}
               <Button loading={linkLoading} onClick={() => void issueLinkCode()}>Try again</Button>
             </div>
           )}

@@ -24,7 +24,7 @@ export default function SpotlightCard({
       viewport={{ once: true, margin: '-60px' }}
       transition={{ duration: 0.6, ease: [0.22, 1, 0.36, 1] }}
       whileHover={{ y: -4 }}
-      className={`group relative overflow-hidden rounded-3xl border border-foreground/10 bg-white p-8 shadow-[0_2px_24px_rgba(46,0,66,0.05)] ${className}`}
+      className={`group relative overflow-hidden rounded-3xl border border-foreground/10 bg-surface p-8 shadow-[0_2px_24px_rgba(46,0,66,0.05)] dark:border-primary/15 dark:shadow-[0_4px_24px_rgba(0,0,0,0.35)] ${className}`}
     >
       <motion.div
         aria-hidden

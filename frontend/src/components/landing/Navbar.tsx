@@ -3,6 +3,7 @@ import { Link } from 'react-router'
 import { motion, useScroll, useMotionValueEvent } from 'framer-motion'
 import Logo from '../Logo'
 import { OpenAppButton } from './OpenAppButton'
+import { ThemeToggle } from '../ui/ThemeToggle'
 
 const LINKS = [
   { label: 'How it works', href: '#how' },
@@ -23,7 +24,7 @@ export default function Navbar() {
         initial={{ y: -80, opacity: 0 }}
         animate={{ y: 0, opacity: 1, maxWidth: scrolled ? 620 : 880 }}
         transition={{ type: 'spring', stiffness: 120, damping: 18 }}
-        className="pointer-events-auto flex w-full items-center justify-between rounded-full border border-foreground/10 bg-white/70 py-2 pl-6 pr-6 shadow-[0_8px_32px_rgba(46,0,66,0.08)] backdrop-blur-xl"
+        className="pointer-events-auto flex w-full items-center justify-between rounded-full border border-foreground/10 bg-surface/75 py-2 pl-6 pr-4 shadow-[0_8px_32px_rgba(46,0,66,0.08)] backdrop-blur-xl dark:border-primary/15 dark:shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
       >
         <Link to="/" className="text-lg">
           <Logo className="h-5" />
@@ -50,7 +51,10 @@ export default function Navbar() {
           ))}
         </ul>
 
-        <OpenAppButton className="inline-flex h-10 items-center rounded-lg bg-primary px-5 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
+        <div className="flex items-center gap-2.5">
+          <ThemeToggle />
+          <OpenAppButton className="inline-flex h-10 items-center rounded-lg bg-primary-action px-5 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
+        </div>
       </motion.nav>
     </div>
   )

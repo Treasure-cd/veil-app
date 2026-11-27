@@ -11,7 +11,7 @@ function RequestVisual() {
         whileInView={{ opacity: 1, x: 0, scale: 1 }}
         viewport={{ once: true }}
         transition={{ delay: 0.3, type: 'spring', stiffness: 200, damping: 16 }}
-        className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary px-4 py-2.5 text-xs text-white"
+        className="ml-auto max-w-[85%] rounded-2xl rounded-br-md bg-primary-action px-4 py-2.5 text-xs text-white"
       >
         Invoice 30k · custom waistbeads
         <Checks size={14} weight="bold" className="ml-auto mt-1 text-white/70" />
@@ -21,7 +21,7 @@ function RequestVisual() {
         whileInView={{ opacity: 1, x: 0, scale: 1 }}
         viewport={{ once: true }}
         transition={{ delay: 0.8, type: 'spring', stiffness: 200, damping: 16 }}
-        className="max-w-[85%] rounded-2xl rounded-bl-md border border-foreground/10 bg-white px-4 py-2.5 text-xs text-foreground/70"
+        className="max-w-[85%] rounded-2xl rounded-bl-md border border-foreground/10 bg-surface px-4 py-2.5 text-xs text-foreground/70"
       >
         Payment link ready. Share it to get paid in stablecoins.
       </motion.div>
@@ -37,7 +37,7 @@ function PayVisual() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true }}
         transition={{ delay: 0.3, duration: 0.6, ease }}
-        className="w-full max-w-[220px] rounded-2xl border border-foreground/10 bg-white p-4 shadow-[0_8px_30px_rgba(46,0,66,0.08)]"
+        className="w-full max-w-[220px] rounded-2xl border border-foreground/10 bg-surface p-4 shadow-[0_8px_30px_rgba(46,0,66,0.08)] dark:border-primary/15 dark:shadow-[0_8px_30px_rgba(0,0,0,0.45)]"
       >
         <div className="mb-3 flex items-center gap-2 text-[11px] text-foreground/50">
           <PenNib size={14} weight="duotone" className="text-primary" />
@@ -51,7 +51,7 @@ function PayVisual() {
             animate={{ scale: [1, 1.25], opacity: [0.6, 0] }}
             transition={{ duration: 1.8, repeat: Infinity, ease: 'easeOut' }}
           />
-          <div className="relative rounded-lg bg-primary py-2 px-2 text-center text-xs font-medium text-white">
+          <div className="relative rounded-lg bg-primary-action py-2 px-2 text-center text-xs font-medium text-white">
             Approve Transaction
           </div>
         </div>
@@ -69,9 +69,9 @@ function SettleVisual() {
         whileInView={{ scale: 1, rotate: 0 }}
         viewport={{ once: true }}
         transition={{ delay: 0.4, type: 'spring', stiffness: 260, damping: 14 }}
-        className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1a0a20] text-white"
+        className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1a0a20] text-white ring-1 ring-primary/30"
       >
-        <ShieldCheck size={20} weight="fill" className="text-primary" />
+        <ShieldCheck size={20} weight="fill" className="text-[#c48aff]" />
       </motion.div>
       <motion.p
         initial={{ opacity: 0, y: 10 }}
@@ -110,7 +110,7 @@ const STEPS = [
 
 export default function HowItWorks() {
   return (
-    <section id="how" className="relative bg-white/50 px-6 py-24 md:px-12 md:py-28">
+    <section id="how" className="relative bg-surface/40 px-6 py-24 md:px-12 md:py-28">
       <div className="mx-auto max-w-6xl">
         <div className="mx-auto mb-16 max-w-xl text-center">
           <motion.p
@@ -141,7 +141,7 @@ export default function HowItWorks() {
               viewport={{ once: true, margin: '-60px' }}
               transition={{ delay: i * 0.15, duration: 0.7, ease }}
               whileHover={{ y: -6 }}
-              className="rounded-3xl border border-foreground/10 bg-white p-4 shadow-[0_2px_24px_rgba(46,0,66,0.05)]"
+              className="rounded-3xl border border-foreground/10 bg-surface p-4 shadow-[0_2px_24px_rgba(46,0,66,0.05)] dark:border-primary/15 dark:shadow-[0_4px_24px_rgba(0,0,0,0.35)]"
             >
               <div className="mb-6 h-48 overflow-hidden rounded-2xl bg-primary/5 p-4 flex items-center justify-center">
                 <s.visual />

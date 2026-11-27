@@ -796,7 +796,7 @@ export default function Checkout() {
   ) {
     return (
       <CheckoutFrame>
-        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
           <CheckCircle size={36} weight="fill" />
         </div>
         <h1 className="mt-5 text-2xl font-semibold tracking-tight text-primary">Payment complete</h1>
@@ -804,14 +804,14 @@ export default function Checkout() {
           <Money amountNgn={invoice.amount_ngn} tokenAmount={headerTokenAmount} token={headerTokenSymbol} className="inline-flex align-middle" /> paid for “{invoice.memo || 'Payment request'}”.
         </p>
         {paidByFiat && invoice.fiatCheckout && (
-          <div className="mt-5 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-900">
+          <div className="mt-5 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-900 dark:border-emerald-500/30 dark:bg-emerald-950/45 dark:text-emerald-200">
             <p className="font-semibold">Settled via NGN bank transfer</p>
             <p className="mt-1">
               Amount: <span className="font-mono font-medium">{formatNgn(invoice.fiatCheckout.amountPayable ?? invoice.fiatCheckout.amount)}</span>
             </p>
-            <p className="mt-0.5 font-mono text-emerald-800/80">Ref: {invoice.fiatCheckout.reference}</p>
+            <p className="mt-0.5 font-mono text-emerald-800/80 dark:text-emerald-300/80">Ref: {invoice.fiatCheckout.reference}</p>
             {invoice.settlementTarget === 'fiat' && invoice.fiatPayout && (
-              <p className="mt-1 text-emerald-900/90">
+              <p className="mt-1 text-emerald-900/90 dark:text-emerald-200">
                 Bank settlement ({invoice.fiatPayout.bankName || invoice.bankAccount?.bankName || 'Linked bank'}):{' '}
                 <span className="font-medium capitalize">{invoice.fiatPayout.status}</span>
               </p>
@@ -819,7 +819,7 @@ export default function Checkout() {
           </div>
         )}
         {pajOrder && !paidByFiat && (
-          <div className="mt-5 space-y-2 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-950">
+          <div className="mt-5 space-y-2 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-left text-xs text-emerald-950 dark:border-emerald-500/30 dark:bg-emerald-950/45 dark:text-emerald-200">
             <div className="flex items-center justify-between gap-2">
               <p className="font-semibold">
                 {paidByPaj ? 'Settled via Paj Cash NGN offramp' : 'Offramp processing via Paj Cash'}
@@ -839,9 +839,9 @@ export default function Checkout() {
               <span className="font-mono font-medium">{formatNgn(pajOrder.fiatAmount)}</span>
               {invoice.bankAccount ? ` (${invoice.bankAccount.bankName})` : ''}
             </p>
-            <p className="truncate font-mono text-emerald-900/75">Deposit: {pajOrder.depositAddress}</p>
+            <p className="truncate font-mono text-emerald-900/75 dark:text-emerald-300/80">Deposit: {pajOrder.depositAddress}</p>
             {pajError && (
-              <p role="alert" className="text-red-700">{pajError}</p>
+              <p role="alert" className="text-red-700 dark:text-red-300">{pajError}</p>
             )}
             {!paidByPaj && (
               <Button
@@ -882,7 +882,7 @@ export default function Checkout() {
   if (invoice.status === 'funded' && invoice.receiveMode === 'private') {
     return (
       <CheckoutFrame>
-        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+        <div className="mx-auto flex size-16 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
           <CheckCircle size={36} weight="fill" />
         </div>
         <h1 className="mt-5 text-2xl font-semibold tracking-tight text-primary">
@@ -905,7 +905,7 @@ export default function Checkout() {
               className="h-11 w-full rounded-card border border-primary/15 bg-background px-3 font-mono text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
             />
             {claimError && (
-              <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">
+              <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">
                 {claimError}
               </p>
             )}
@@ -964,7 +964,7 @@ export default function Checkout() {
       <p className="mt-2 text-sm text-foreground/65">{invoice.memo || 'Payment request'}</p>
 
       {countdown && (
-        <p className={`mt-3 inline-flex rounded-pill px-3 py-1.5 text-xs font-medium tabular-nums ${expired ? 'bg-amber-50 text-amber-800' : 'bg-primary/5 text-primary/70'}`} role="timer">
+        <p className={`mt-3 inline-flex rounded-pill px-3 py-1.5 text-xs font-medium tabular-nums ${expired ? 'bg-amber-50 text-amber-800 dark:bg-amber-950/40 dark:text-amber-300' : 'bg-primary/5 text-primary/70'}`} role="timer">
           {expired ? 'Quote expired' : `Locked quote expires in ${countdown}`}
           {expired && pendingTransaction ? ' · confirm your submitted transfer below' : ''}
         </p>
@@ -982,7 +982,7 @@ export default function Checkout() {
             aria-selected={payMethod === 'bank'}
             onClick={() => setPayMethod('bank')}
             className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-              payMethod === 'bank' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+              payMethod === 'bank' ? 'bg-primary-action text-white' : 'text-foreground/65 hover:text-primary'
             }`}
           >
             <Bank size={15} weight={payMethod === 'bank' ? 'fill' : 'regular'} />
@@ -995,7 +995,7 @@ export default function Checkout() {
           aria-selected={payMethod === 'wallet'}
           onClick={() => setPayMethod('wallet')}
           className={`flex min-h-9 items-center justify-center gap-1.5 rounded-pill px-3 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-            payMethod === 'wallet' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+            payMethod === 'wallet' ? 'bg-primary-action text-white' : 'text-foreground/65 hover:text-primary'
           }`}
         >
           <Wallet size={15} weight={payMethod === 'wallet' ? 'fill' : 'regular'} />
@@ -1006,7 +1006,7 @@ export default function Checkout() {
       {payMethod === 'bank' ? (
         <div className="mt-5 space-y-4">
           {fiatError && (
-            <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+            <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">
               {fiatError}
             </p>
           )}
@@ -1065,8 +1065,8 @@ export default function Checkout() {
                       onClick={() => setPajTokenChoice(symbol)}
                       className={`min-h-8 rounded-pill border px-3 text-xs font-semibold transition-colors ${
                         pajTokenChoice === symbol
-                          ? 'border-primary bg-primary text-white'
-                          : 'border-primary/15 bg-white text-foreground/70 hover:border-primary/35 hover:text-primary'
+                          ? 'border-primary-action bg-primary-action text-white'
+                          : 'border-primary/15 bg-surface text-foreground/70 hover:border-primary/35 hover:text-primary'
                       }`}
                     >
                       {symbol}
@@ -1078,8 +1078,8 @@ export default function Checkout() {
                     onClick={() => setPajTokenChoice('CUSTOM')}
                     className={`min-h-8 rounded-pill border px-3 text-xs font-semibold transition-colors ${
                       pajTokenChoice === 'CUSTOM'
-                        ? 'border-primary bg-primary text-white'
-                        : 'border-primary/15 bg-white text-foreground/70 hover:border-primary/35 hover:text-primary'
+                        ? 'border-primary-action bg-primary-action text-white'
+                        : 'border-primary/15 bg-surface text-foreground/70 hover:border-primary/35 hover:text-primary'
                     }`}
                   >
                     Custom mint
@@ -1095,7 +1095,7 @@ export default function Checkout() {
                       value={customMint}
                       onChange={(event) => setCustomMint(event.target.value)}
                       placeholder="Paste Solana SPL mint address"
-                      className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 font-mono text-xs outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                      className="h-10 w-full rounded-card border border-primary/15 bg-surface px-3 font-mono text-xs outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                     />
                   </div>
                 )}
@@ -1118,13 +1118,13 @@ export default function Checkout() {
               </div>
 
               {pajError && (
-                <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">
+                <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">
                   {pajError}
                 </p>
               )}
 
               {pajOrder && pajBadge && (
-                <div className="space-y-3 rounded-card border border-primary/15 bg-white p-4">
+                <div className="space-y-3 rounded-card border border-primary/15 bg-surface p-4">
                   <div className="flex items-center justify-between gap-2">
                     <div>
                       <p className="text-xs text-foreground/55">Send exact amount</p>
@@ -1167,7 +1167,7 @@ export default function Checkout() {
                   </div>
 
                   {NETWORK !== 'mainnet-beta' && (
-                    <p role="status" className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900">
+                    <p role="status" className="rounded-card border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-relaxed text-amber-900 dark:border-amber-500/30 dark:bg-amber-950/40 dark:text-amber-200">
                       Paj Cash settles on Solana Mainnet, while this app is configured for {NETWORK_LABEL[NETWORK]}.
                       Send {pajOrder.tokenAmount ?? ''} {pajOrder.tokenSymbol} on Mainnet to the deposit address above,
                       then click Reconcile status.
@@ -1203,7 +1203,7 @@ export default function Checkout() {
           )}
 
           {paymentError && (
-            <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700">
+            <p role="alert" className="mb-4 whitespace-pre-line rounded-card bg-red-50 px-3 py-2 text-left text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">
               {pendingTransaction || pendingPrivateSignature
                 ? 'Payment sent, but confirmation is pending. Retry to finish confirmation. '
                 : ''}
@@ -1225,7 +1225,7 @@ export default function Checkout() {
             </p>
           )}
           {connectError && (
-            <p role="alert" className="mb-4 rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{connectError}</p>
+            <p role="alert" className="mb-4 rounded-card bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">{connectError}</p>
           )}
 
           {publicKey && connected ? (
@@ -1265,7 +1265,7 @@ export default function Checkout() {
                   type="button"
                   disabled={connecting || pendingConnect}
                   onClick={() => chooseWallet(adapter.name)}
-                  className="flex w-full items-center gap-3 rounded-card border border-primary/15 bg-white px-4 py-3 text-left text-sm font-medium transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
+                  className="flex w-full items-center gap-3 rounded-card border border-primary/15 bg-surface px-4 py-3 text-left text-sm font-medium transition hover:border-primary/40 hover:bg-primary/5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
                 >
                   <img src={adapter.icon} alt="" className="size-6 rounded-md" />
                   {connecting || pendingConnect ? 'Connecting…' : `Continue with ${adapter.name}`}
@@ -1292,7 +1292,7 @@ export default function Checkout() {
 function CheckoutFrame({ children }: { children: ReactNode }) {
   return (
     <main className="flex min-h-[calc(100dvh-4rem)] items-center justify-center bg-background px-4 py-10">
-      <section className="w-full max-w-md rounded-panel border border-primary/10 bg-white p-6 text-center shadow-veil-md sm:p-8">
+      <section className="w-full max-w-md rounded-panel border border-primary/10 bg-surface p-6 text-center shadow-veil-md sm:p-8">
         {children}
       </section>
     </main>

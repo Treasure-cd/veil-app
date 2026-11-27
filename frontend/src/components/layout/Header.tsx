@@ -7,13 +7,14 @@ import { ConnectWalletButton } from '../../auth/ConnectWalletButton'
 import { Button } from '../../components/ui/Button'
 import { useNavigate } from 'react-router'
 import { MoneyDisplayToggle } from '../ui/MoneyDisplayToggle'
+import { ThemeToggle } from '../ui/ThemeToggle'
 
 function NetworkBadge() {
   const cluster = IS_MAINNET ? 'mainnet-beta' : 'devnet'
   return (
     <span
       title={`Solana ${NETWORK_LABEL[cluster]} · USDC mint ${USDC_MINT}`}
-      className="inline-flex h-9 items-center gap-2 rounded-pill border border-primary/10 bg-white px-3 text-sm font-medium"
+      className="inline-flex h-9 items-center gap-2 rounded-pill border border-primary/10 bg-surface px-3 text-sm font-medium"
     >
       <span
         className={`size-2 rounded-full ${IS_MAINNET ? 'bg-emerald-500' : 'bg-amber-500'}`}
@@ -63,6 +64,7 @@ export function Header() {
       <Logo className="h-5 md:hidden" />
 
       <div className="ml-auto flex items-center gap-2 md:gap-3">
+        <ThemeToggle />
         <MoneyDisplayToggle />
         <NetworkBadge />
         <Button
@@ -86,7 +88,7 @@ export function Header() {
             <div
               role="menu"
               aria-label="Wallet options"
-              className="absolute right-0 top-[calc(100%+0.65rem)] z-30 w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-card border border-primary/10 bg-white p-2 shadow-veil-lg"
+              className="absolute right-0 top-[calc(100%+0.65rem)] z-30 w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-card border border-primary/10 bg-surface p-2 shadow-veil-lg"
             >
               <div className="px-3 py-2.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Connected wallet</p>
@@ -100,7 +102,7 @@ export function Header() {
                 role="menuitem"
                 disabled={disconnecting}
                 onClick={() => void handleDisconnect()}
-                className="flex min-h-11 w-full items-center gap-2.5 rounded-card px-3 text-left text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60"
+                className="flex min-h-11 w-full items-center gap-2.5 rounded-card px-3 text-left text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40"
               >
                 <SignOut size={18} weight="bold" aria-hidden="true" />
                 {disconnecting ? 'Disconnecting…' : 'Disconnect'}

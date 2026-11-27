@@ -81,7 +81,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
       onClick={(event) => {
         if (event.target === event.currentTarget) onClose()
       }}
-      className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel bg-white p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-panel"
+      className="m-auto max-h-[90dvh] w-[calc(100%-2rem)] max-w-md overflow-y-auto rounded-panel border border-primary/10 bg-surface p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm max-sm:mb-0 max-sm:mt-auto max-sm:w-full max-sm:max-w-none max-sm:rounded-b-none max-sm:rounded-t-panel dark:backdrop:bg-black/65"
     >
       <div className="p-5 sm:p-7">
         <div className="flex items-start justify-between gap-4">
@@ -108,7 +108,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
 
         {result ? (
           <div className="mt-6 space-y-4" aria-live="polite">
-            <p className="flex items-center gap-2 text-sm font-medium text-emerald-800">
+            <p className="flex items-center gap-2 text-sm font-medium text-emerald-800 dark:text-emerald-300">
               <CheckCircle size={19} weight="fill" aria-hidden="true" /> You’re ready to try the demo.
             </p>
             {resultWalletAddress ? (
@@ -128,7 +128,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                   href={result.join_url}
                   target="_blank"
                   rel="noreferrer"
-                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-sm bg-primary px-4 text-sm font-medium text-white hover:bg-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+                  className="mt-3 inline-flex min-h-11 w-full items-center justify-center rounded-sm bg-primary-action px-4 text-sm font-medium text-white hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
                 >
                   Join the bot
                 </a>
@@ -173,7 +173,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                   <button
                     type="button"
                     onClick={() => void disconnectWallet()}
-                    className="shrink-0 text-xs font-medium text-primary underline underline-offset-2 hover:text-secondary focus-visible:outline-2 focus-visible:outline-accent"
+                    className="shrink-0 text-xs font-medium text-primary underline underline-offset-2 hover:text-primary/80 focus-visible:outline-2 focus-visible:outline-accent"
                   >
                     Change
                   </button>
@@ -190,7 +190,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
               Phone number
             </label>
             <div className="flex h-12 overflow-hidden rounded-card border border-primary/15 bg-background focus-within:border-primary/40 focus-within:ring-2 focus-within:ring-primary/10">
-              <span className="flex shrink-0 items-center border-r border-primary/10 bg-white px-3 font-mono text-sm text-foreground/65">+234</span>
+              <span className="flex shrink-0 items-center border-r border-primary/10 bg-surface px-3 font-mono text-sm text-foreground/65">+234</span>
               <input
                 id="demo-phone"
                 type="tel"
@@ -203,7 +203,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                 className="min-w-0 flex-1 bg-transparent px-3 text-base outline-none placeholder:text-foreground/35"
               />
             </div>
-            {error && <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700">{error}</p>}
+            {error && <p role="alert" className="rounded-card bg-red-50 px-3 py-2 text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">{error}</p>}
             <Button type="submit" fullWidth size="lg" loading={loading}>
               Get demo link
             </Button>

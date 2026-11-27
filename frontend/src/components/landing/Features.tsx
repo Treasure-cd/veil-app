@@ -65,7 +65,7 @@ export default function Features() {
                   <p className="text-[11px] text-foreground/50">Payroll vault locked</p>
                   <p className="font-mono text-2xl font-medium">4,350 USDC</p>
                 </div>
-                <span className="rounded-full bg-white px-3 py-1 text-[11px] font-medium text-primary shadow-sm">
+                <span className="rounded-full bg-surface px-3 py-1 text-[11px] font-medium text-primary shadow-sm dark:border dark:border-primary/15">
                   Scheduled for Friday
                 </span>
               </div>
@@ -89,7 +89,7 @@ export default function Features() {
               desc="Text the bot. Get a secure checkout link instantly."
             />
             <div className="mt-8 space-y-2">
-              <div className="ml-auto w-fit rounded-2xl rounded-br-md bg-primary px-3.5 py-2 text-xs text-white">
+              <div className="ml-auto w-fit rounded-2xl rounded-br-md bg-primary-action px-3.5 py-2 text-xs text-white">
                 invoice 30k for waistbeads
               </div>
               <div className="flex w-fit items-center gap-1 rounded-2xl rounded-bl-md bg-primary/5 px-3.5 py-3">
@@ -112,10 +112,10 @@ export default function Features() {
               title="Hardware-Free POS"
               desc="Your phone is the terminal. Track volume, scan QR codes, and view complete transaction history without buying physical hardware."
             />
-            <div className="mt-8 flex flex-col gap-2 rounded-xl bg-white p-3 shadow-sm border border-foreground/5">
+            <div className="mt-8 flex flex-col gap-2 rounded-xl bg-surface p-3 shadow-sm border border-foreground/5 dark:border-primary/15">
               <div className="flex items-center justify-between border-b border-foreground/5 pb-2">
                 <div className="flex items-center gap-2">
-                  <div className="h-6 w-6 rounded-full bg-green-100 flex items-center justify-center text-green-600">
+                  <div className="h-6 w-6 rounded-full bg-green-100 flex items-center justify-center text-green-600 dark:bg-emerald-500/15 dark:text-emerald-400">
                     <ClockCounterClockwise size={12} weight="bold" />
                   </div>
                   <span className="text-xs font-medium text-foreground">Recent Volume</span>

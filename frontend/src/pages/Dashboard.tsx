@@ -57,13 +57,13 @@ function DashboardSkeleton() {
     <div className="mx-auto max-w-6xl animate-pulse space-y-6" role="status" aria-label="Loading dashboard">
       <div className="h-8 w-44 rounded bg-primary/10" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-        {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-32 rounded-panel border border-primary/5 bg-white" />)}
+        {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-32 rounded-panel border border-primary/10 bg-surface" />)}
       </div>
       <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
-        <div className="h-80 rounded-panel border border-primary/5 bg-white" />
-        <div className="h-80 rounded-panel border border-primary/5 bg-white" />
+        <div className="h-80 rounded-panel border border-primary/10 bg-surface" />
+        <div className="h-80 rounded-panel border border-primary/10 bg-surface" />
       </div>
-      <div className="h-72 rounded-panel border border-primary/5 bg-white" />
+      <div className="h-72 rounded-panel border border-primary/10 bg-surface" />
     </div>
   )
 }
@@ -96,8 +96,8 @@ function DailyVolumeChart({ points }: { points: DashboardData['daily_volume'] })
         <path d={hasVolume ? path : `M ${pad.left} ${pad.top + chartHeight} L ${width - pad.right} ${pad.top + chartHeight}`} fill="none" stroke="currentColor" className="text-primary" strokeWidth="2.5" strokeLinejoin="round" strokeLinecap="round" />
         <defs>
           <linearGradient id="volume-fill" x1="0" x2="0" y1="0" y2="1">
-            <stop offset="0%" stopColor="#5c049f" stopOpacity="0.16" />
-            <stop offset="100%" stopColor="#5c049f" stopOpacity="0" />
+            <stop offset="0%" stopColor="var(--color-primary)" stopOpacity="0.18" />
+            <stop offset="100%" stopColor="var(--color-primary)" stopOpacity="0" />
           </linearGradient>
         </defs>
         {[0, 7, 14, 21, 29].filter((index) => points[index]).map((index) => (
@@ -131,7 +131,7 @@ export default function Dashboard() {
   if (loading) return <DashboardSkeleton />
   if (!data) {
     return (
-      <section className="mx-auto max-w-xl rounded-panel border border-primary/10 bg-white p-8 text-center">
+      <section className="mx-auto max-w-xl rounded-panel border border-primary/10 bg-surface p-8 text-center">
         <h1 className="text-xl font-semibold text-primary">Dashboard unavailable</h1>
         <p role="alert" className="mt-2 text-sm text-foreground/60">{error ?? 'Could not load dashboard data.'}</p>
         <Button className="mt-6" onClick={() => window.location.reload()}>Try again</Button>
@@ -158,7 +158,7 @@ export default function Dashboard() {
       <section aria-label="Key metrics" className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <KpiCard label="Volume · 30 days">
           <Money amountNgn={data.volume_30d_ngn} primaryClassName="text-2xl font-semibold tracking-tight text-primary" />
-          <div className={`mt-2 text-xs font-medium ${change === null ? 'text-foreground/45' : change >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+          <div className={`mt-2 text-xs font-medium ${change === null ? 'text-foreground/45' : change >= 0 ? 'text-emerald-700 dark:text-emerald-400' : 'text-red-700 dark:text-red-400'}`}>
             {change === null ? 'No previous period volume' : `${change > 0 ? '+' : ''}${change.toFixed(1)}% vs previous 30 days`}
           </div>
         </KpiCard>
@@ -177,7 +177,7 @@ export default function Dashboard() {
       </section>
 
       {isEmpty ? (
-        <section className="rounded-panel border border-primary/10 bg-white px-6 py-12 text-center">
+        <section className="rounded-panel border border-primary/10 bg-surface px-6 py-12 text-center">
           <h2 className="text-xl font-semibold tracking-tight text-primary">Your dashboard is ready</h2>
           <p className="mx-auto mt-2 max-w-md text-sm leading-relaxed text-foreground/55">Create a naira payment request or set up payroll to see your volume, channels, and activity here.</p>
           <div className="mt-5 flex flex-wrap justify-center gap-2">
@@ -188,7 +188,7 @@ export default function Dashboard() {
       ) : (
         <>
           <div className="grid gap-4 lg:grid-cols-[1.6fr_1fr]">
-            <section className="rounded-panel border border-primary/10 bg-white p-5 sm:p-6">
+            <section className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
               <div className="mb-4 flex items-start justify-between gap-4">
                 <div><h2 className="font-semibold text-primary">Daily volume</h2><p className="mt-0.5 text-xs text-foreground/45">Last 30 days · all successful payments</p></div>
                 <Money amountNgn={data.volume_30d_ngn} align="right" primaryClassName="text-sm font-semibold text-primary" />
@@ -196,7 +196,7 @@ export default function Dashboard() {
               <DailyVolumeChart points={data.daily_volume} />
             </section>
 
-            <section className="rounded-panel border border-primary/10 bg-white p-5 sm:p-6">
+            <section className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
               <h2 className="font-semibold text-primary">By channel</h2>
               <p className="mt-0.5 text-xs text-foreground/45">All successful payments</p>
               <div className="mt-5 space-y-4">
@@ -219,7 +219,7 @@ export default function Dashboard() {
           </div>
 
           <div className="grid gap-4 lg:grid-cols-[0.8fr_1.2fr]">
-            <section className="rounded-panel border border-primary/10 bg-white p-5 sm:p-6">
+            <section className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
               <h2 className="font-semibold text-primary">Privacy split</h2>
               <p className="mt-0.5 text-xs text-foreground/45">All successful payments</p>
               <div className="mt-5 grid grid-cols-2 gap-3">
@@ -233,7 +233,7 @@ export default function Dashboard() {
               </div>
             </section>
 
-            <section className="overflow-hidden rounded-panel border border-primary/10 bg-white">
+            <section className="overflow-hidden rounded-panel border border-primary/10 bg-surface">
               <div className="flex items-center justify-between gap-3 border-b border-primary/5 px-5 py-4">
                 <div><h2 className="font-semibold text-primary">Recent activity</h2><p className="mt-0.5 text-xs text-foreground/45">Latest payment requests</p></div>
                 <button type="button" onClick={() => navigate('/payments')} className="text-xs font-semibold text-primary hover:underline">Payments</button>
@@ -261,7 +261,7 @@ export default function Dashboard() {
 
 function KpiCard({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <article className="min-h-32 rounded-panel border border-primary/10 bg-white p-5">
+    <article className="min-h-32 rounded-panel border border-primary/10 bg-surface p-5">
       <p className="mb-3 text-xs font-medium text-foreground/50">{label}</p>
       {children}
     </article>

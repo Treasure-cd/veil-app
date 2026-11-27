@@ -16,9 +16,9 @@ const base =
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 const variants: Record<Variant, string> = {
-  primary: 'bg-primary text-white shadow-veil-sm hover:bg-secondary',
+  primary: 'bg-primary-action text-white shadow-veil-sm hover:bg-primary-action-hover',
   secondary:
-    'border border-primary/20 bg-white text-primary hover:border-primary/40 hover:bg-primary/5',
+    'border border-primary/20 bg-surface text-primary hover:border-primary/40 hover:bg-primary/5',
 }
 
 const sizes: Record<Size, string> = {

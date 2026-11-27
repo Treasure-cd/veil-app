@@ -11,7 +11,7 @@ export default function CTA() {
         whileInView={{ opacity: 1, y: 0 }}
         viewport={{ once: true, margin: '-80px' }}
         transition={{ duration: 0.9, ease }}
-        className="relative w-full overflow-hidden bg-secondary px-6 py-24 text-center md:px-12"
+        className="relative w-full overflow-hidden bg-secondary px-6 py-24 text-center md:px-12 dark:border-t dark:border-primary/15"
         style={{
           backgroundImage: 'radial-gradient(rgba(255,255,255,0.09) 1px, transparent 1px)',
           backgroundSize: '24px 24px',

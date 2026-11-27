@@ -22,7 +22,7 @@ const STEP_LABEL: Record<SignInStep, string> = {
 }
 
 const linkClass =
-  'font-medium text-primary underline underline-offset-4 hover:text-secondary ' +
+  'font-medium text-primary underline underline-offset-4 hover:text-primary/80 ' +
   'focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent'
 
 export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps) {
@@ -84,7 +84,7 @@ export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps
       onClick={(e) => {
         if (dismissible && e.target === e.currentTarget) onClose?.()
       }}
-      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-panel bg-white p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm"
+      className="m-auto w-[calc(100%-2rem)] max-w-md rounded-panel border border-primary/10 bg-surface p-0 text-foreground shadow-veil-lg backdrop:bg-foreground/40 backdrop:backdrop-blur-sm dark:backdrop:bg-black/65"
     >
       <div className="flex flex-col gap-6 p-6 sm:p-8">
         <div className="flex flex-col gap-2">
@@ -99,7 +99,7 @@ export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps
         </div>
 
         {message && (
-          <p role="alert" className="rounded-card bg-red-50 px-4 py-3 text-sm text-red-700">
+          <p role="alert" className="rounded-card bg-red-50 px-4 py-3 text-sm text-red-700 dark:bg-red-950/45 dark:text-red-300">
             {message}
           </p>
         )}

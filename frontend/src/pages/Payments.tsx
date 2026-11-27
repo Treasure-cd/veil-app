@@ -272,7 +272,7 @@ export default function Payments() {
         </div>
 
         <div
-          className="inline-flex rounded-pill border border-primary/10 bg-white p-1 shadow-veil-sm"
+          className="inline-flex rounded-pill border border-primary/10 bg-surface p-1 shadow-veil-sm"
           role="tablist"
           aria-label="Payment workspace"
         >
@@ -282,7 +282,7 @@ export default function Payments() {
             aria-selected={section === 'request'}
             onClick={() => setSection('request')}
             className={`min-h-9 rounded-pill px-4 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-              section === 'request' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+              section === 'request' ? 'bg-primary-action text-white' : 'text-foreground/65 hover:text-primary'
             }`}
           >
             Request payment
@@ -293,7 +293,7 @@ export default function Payments() {
             aria-selected={section === 'payouts'}
             onClick={() => setSection('payouts')}
             className={`min-h-9 rounded-pill px-4 text-sm font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-              section === 'payouts' ? 'bg-primary text-white' : 'text-foreground/65 hover:text-primary'
+              section === 'payouts' ? 'bg-primary-action text-white' : 'text-foreground/65 hover:text-primary'
             }`}
           >
             NGN payouts
@@ -305,8 +305,8 @@ export default function Payments() {
         <PayoutsPanel />
       ) : generatedLink ? (
         <div className="mx-auto max-w-2xl">
-          <section className="rounded-panel border border-primary/10 bg-white p-6 text-center shadow-veil-sm sm:p-8">
-            <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700">
+          <section className="rounded-panel border border-primary/10 bg-surface p-6 text-center shadow-veil-sm sm:p-8">
+            <div className="mx-auto flex size-14 items-center justify-center rounded-full bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300">
               <CheckCircle size={30} weight="fill" />
             </div>
             <h2 className="mt-4 text-2xl font-semibold tracking-tight text-primary">Payment link ready</h2>
@@ -334,7 +334,7 @@ export default function Payments() {
               )}
             </p>
             {generatedPayment?.receiveMode === 'private' && (
-              <span className="mt-3 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+              <span className="mt-3 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-500/15 dark:text-amber-300">
                 Private · Umbra
               </span>
             )}
@@ -373,7 +373,7 @@ export default function Payments() {
               <div className="mx-auto mt-6 max-w-lg rounded-card border border-primary/15 bg-background p-4 text-left">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-primary">Auto-offramp to Nigerian bank (Paj Cash)</p>
-                  <span className="rounded-pill bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800">
+                  <span className="rounded-pill bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
                     Any Solana token → NGN
                   </span>
                 </div>
@@ -384,7 +384,7 @@ export default function Payments() {
                     {generatedPayment.bankAccount.accountName ? ` · ${generatedPayment.bankAccount.accountName}` : ''}
                   </p>
                 )}
-                <div className="mt-3 flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-white px-3 py-2">
+                <div className="mt-3 flex items-center justify-between gap-2 rounded-card border border-primary/10 bg-surface px-3 py-2">
                   <div className="min-w-0">
                     <p className="text-[11px] uppercase tracking-wider text-foreground/50">
                       {IS_MAINNET
@@ -417,7 +417,7 @@ export default function Payments() {
               </div>
             )}
 
-            {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+            {error && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
             <Button
               className="mt-6"
               variant="secondary"
@@ -436,13 +436,13 @@ export default function Payments() {
       ) : (
         <>
           {error && (
-            <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+            <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
               {error}
             </p>
           )}
 
           <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="space-y-5 rounded-panel border border-primary/10 bg-white p-5 shadow-veil-sm sm:p-6">
+            <section className="space-y-5 rounded-panel border border-primary/10 bg-surface p-5 shadow-veil-sm sm:p-6">
               <div className="space-y-1.5">
                 <label htmlFor="payment-memo" className="text-sm font-medium">Description</label>
                 <input
@@ -534,7 +534,7 @@ export default function Payments() {
                       <p className="text-xs font-semibold text-foreground">Bank transfer fee</p>
                       <p className="text-xs text-foreground/55">Choose who absorbs the FossaPay checkout fee</p>
                     </div>
-                    <div className="inline-flex rounded-pill border border-primary/10 bg-white p-0.5" role="group" aria-label="Checkout fee bearer">
+                    <div className="inline-flex rounded-pill border border-primary/10 bg-surface p-0.5" role="group" aria-label="Checkout fee bearer">
                       {(['customer', 'merchant'] as const).map((option) => (
                         <button
                           key={option}
@@ -542,7 +542,7 @@ export default function Payments() {
                           aria-pressed={feeBearer === option}
                           onClick={() => setFeeBearer(option)}
                           className={`min-h-8 rounded-pill px-3 text-xs font-semibold capitalize transition-colors ${
-                            feeBearer === option ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                            feeBearer === option ? 'bg-primary-action text-white' : 'text-foreground/60 hover:text-primary'
                           }`}
                         >
                           {option}
@@ -617,7 +617,7 @@ export default function Payments() {
                           id="paj-bank-account-select"
                           value={selectedBankAccount?.id ?? ''}
                           onChange={(event) => setSelectedBankAccountId(event.target.value)}
-                          className="h-10 w-full rounded-card border border-primary/15 bg-white px-3 text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
+                          className="h-10 w-full rounded-card border border-primary/15 bg-surface px-3 text-sm outline-none transition focus:border-primary/40 focus:ring-2 focus:ring-primary/10"
                         >
                           {bankAccounts.map((acc) => (
                             <option key={acc.id} value={acc.id}>
@@ -675,7 +675,7 @@ export default function Payments() {
                         onClick={() => setReceiveMode('private')}
                         className={`rounded-card border p-3 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
                           receiveMode === 'private'
-                            ? 'border-amber-500/45 bg-amber-50'
+                            ? 'border-amber-500/45 bg-amber-50 dark:bg-amber-950/35'
                             : 'border-primary/10 bg-background hover:border-primary/25'
                         }`}
                       >
@@ -707,7 +707,7 @@ export default function Payments() {
                   {settlementTarget === 'fiat' ? 'Settles to NGN Bank (Paj Cash)' : 'Settles to Crypto Wallet'}
                 </span>
                 {settlementTarget === 'crypto' && receiveMode === 'private' && (
-                  <span className="mt-2 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900">
+                  <span className="mt-2 inline-flex rounded-pill bg-amber-100 px-2.5 py-0.5 text-xs font-semibold text-amber-900 dark:bg-amber-500/15 dark:text-amber-300">
                     Private · Umbra
                   </span>
                 )}

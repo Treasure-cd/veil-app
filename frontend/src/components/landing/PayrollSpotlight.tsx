@@ -25,7 +25,7 @@ export default function PayrollSpotlight() {
   const [view, setView] = useState<View>('employer')
 
   return (
-    <section id="payroll" className="relative bg-white/50 px-6 py-24 md:px-12 md:py-28">
+    <section id="payroll" className="relative bg-surface/40 px-6 py-24 md:px-12 md:py-28">
       <div className="mx-auto grid max-w-6xl items-center gap-16 md:grid-cols-2">
         {/* copy */}
         <div>
@@ -73,7 +73,7 @@ export default function PayrollSpotlight() {
           </ul>
 
           <motion.div className="w-fit">
-            <OpenAppButton className="inline-flex h-12 items-center rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
+            <OpenAppButton className="inline-flex h-12 items-center rounded-lg bg-primary-action px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
           </motion.div>
         </div>
 
@@ -87,7 +87,7 @@ export default function PayrollSpotlight() {
         >
           <div className="absolute -inset-6 -z-10 rounded-[2.5rem] bg-gradient-to-br from-primary/15 to-accent/15 blur-2xl" />
 
-          <div className="rounded-3xl border border-foreground/10 bg-white p-6 shadow-[0_20px_60px_rgba(46,0,66,0.12)]">
+          <div className="rounded-3xl border border-foreground/10 bg-surface p-6 shadow-[0_20px_60px_rgba(46,0,66,0.12)] dark:border-primary/15 dark:shadow-[0_20px_60px_rgba(0,0,0,0.5)]">
             {/* header row */}
             <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -110,7 +110,7 @@ export default function PayrollSpotlight() {
                     {view === v && (
                       <motion.span
                         layoutId="payroll-toggle"
-                        className="absolute inset-0 -z-10 rounded-full bg-primary"
+                        className="absolute inset-0 -z-10 rounded-full bg-primary-action"
                         transition={{ type: 'spring', stiffness: 400, damping: 30 }}
                       />
                     )}

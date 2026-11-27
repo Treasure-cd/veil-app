@@ -132,12 +132,12 @@ export function getPajStatusPresentation(status: PajOrderStatus): {
 } {
   switch (status) {
     case 'COMPLETED':
-      return { label: 'Paid to bank', className: 'bg-emerald-100 text-emerald-800' }
+      return { label: 'Paid to bank', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' }
     case 'PROCESSING':
       return { label: 'Converting to NGN', className: 'bg-primary/10 text-primary' }
     case 'INIT':
-      return { label: 'Awaiting token deposit', className: 'bg-amber-100 text-amber-800' }
+      return { label: 'Awaiting token deposit', className: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300' }
     case 'ERROR':
-      return { label: 'Offramp error', className: 'bg-red-100 text-red-700' }
+      return { label: 'Offramp error', className: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300' }
   }
 }

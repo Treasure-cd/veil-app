@@ -52,7 +52,7 @@ function NoiseOverlay() {
   return (
     <div
       aria-hidden="true"
-      className="pointer-events-none absolute inset-0 z-10 opacity-35 mix-blend-multiply"
+      className="pointer-events-none absolute inset-0 z-10 opacity-35 mix-blend-multiply dark:opacity-15 dark:mix-blend-screen"
       style={{
         backgroundImage: `url("data:image/svg+xml,%3Csvg width='200' height='200' viewBox='0 0 200 200' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='noise'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.75' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23noise)'/%3E%3C/svg%3E")`,
         backgroundSize: '180px 180px',
@@ -163,7 +163,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
             transition={{ delay: 0.9, duration: 0.6, ease }}
             className="flex flex-wrap items-center gap-4"
           >
-            <OpenAppButton className="inline-flex h-12 items-center gap-2 rounded-lg bg-primary px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary/90 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
+            <OpenAppButton className="inline-flex h-12 items-center gap-2 rounded-lg bg-primary-action px-7 text-sm font-medium text-white shadow-veil-md transition-colors hover:bg-primary-action-hover focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent" />
 
             <motion.button
               type="button"
@@ -206,7 +206,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
               stiffness: 200,
               damping: 14,
             }}
-            className="absolute -left-8 bottom-24 rounded-2xl border border-foreground/10 bg-white/90 px-4 py-3 shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur"
+            className="absolute -left-8 bottom-24 rounded-2xl border border-foreground/10 bg-surface/90 px-4 py-3 shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur dark:border-primary/20 dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
           >
             <p className="text-[10px] text-foreground/50">
               Instant Settlement
@@ -226,7 +226,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
               stiffness: 200,
               damping: 14,
             }}
-            className="absolute -right-6 top-20 flex items-center gap-2 rounded-full border border-primary/20 bg-white/90 px-3.5 py-2 text-xs font-medium text-primary shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur"
+            className="absolute -right-6 top-20 flex items-center gap-2 rounded-full border border-primary/20 bg-surface/90 px-3.5 py-2 text-xs font-medium text-primary shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
           >
             <LockKey weight="fill" size={14} />
             Data Shielded

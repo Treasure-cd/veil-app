@@ -300,22 +300,22 @@ export function PayoutsPanel() {
   return (
     <div className="space-y-6">
       {submitError && (
-        <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+        <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
           {submitError}
         </p>
       )}
       {submitSuccess && (
-        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800">
+        <div role="status" className="flex flex-wrap items-center justify-between gap-3 rounded-card border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/45 dark:text-emerald-300">
           <p className="flex items-center gap-2 font-medium">
             <CheckCircle size={18} weight="fill" className="shrink-0" />
             Payout of {formatNgn(submitSuccess.amount)} to {submitSuccess.accountName} submitted ({submitSuccess.status}).
           </p>
-          <span className="font-mono text-xs text-emerald-900/75">{submitSuccess.reference}</span>
+          <span className="font-mono text-xs text-emerald-900/75 dark:text-emerald-300/80">{submitSuccess.reference}</span>
         </div>
       )}
 
       <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
-        <section className="space-y-5 rounded-panel border border-primary/10 bg-white p-5 shadow-veil-sm sm:p-6">
+        <section className="space-y-5 rounded-panel border border-primary/10 bg-surface p-5 shadow-veil-sm sm:p-6">
           <div className="flex items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold text-primary">Send NGN to bank account</h2>
@@ -329,7 +329,7 @@ export function PayoutsPanel() {
           <div className="space-y-2">
             <label htmlFor="bank-search" className="text-sm font-medium">Destination bank</label>
             {banksError ? (
-              <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700">
+              <div className="flex flex-wrap items-center justify-between gap-2 rounded-card border border-red-200 bg-red-50 px-3 py-2.5 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
                 <span>{banksError}</span>
                 <button type="button" onClick={() => void loadBanks()} className="font-medium underline">
                   Retry
@@ -419,13 +419,13 @@ export function PayoutsPanel() {
             </p>
           )}
           {enquiry && (
-            <div className="flex items-center gap-2 rounded-card border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800">
+            <div className="flex items-center gap-2 rounded-card border border-emerald-200 bg-emerald-50 px-3.5 py-2.5 text-sm text-emerald-800 dark:border-emerald-500/30 dark:bg-emerald-950/45 dark:text-emerald-300">
               <CheckCircle size={18} weight="fill" className="shrink-0" />
               <span className="font-medium">{enquiry.accountName}</span>
             </div>
           )}
           {enquiryError && (
-            <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700">
+            <p role="alert" className="rounded-card border border-red-200 bg-red-50 px-3.5 py-2.5 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
               {enquiryError}
             </p>
           )}
@@ -508,7 +508,7 @@ export function PayoutsPanel() {
         </aside>
       </div>
 
-      <section className="overflow-hidden rounded-panel border border-primary/10 bg-white shadow-veil-sm">
+      <section className="overflow-hidden rounded-panel border border-primary/10 bg-surface shadow-veil-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-primary/10 px-5 py-4">
           <div>
             <h2 className="font-semibold text-primary">Fiat activity</h2>
@@ -526,7 +526,7 @@ export function PayoutsPanel() {
                 aria-selected={activitySource === 'fossapay'}
                 onClick={() => setActivitySource('fossapay')}
                 className={`min-h-8 rounded-pill px-3 text-xs font-semibold transition-colors ${
-                  activitySource === 'fossapay' ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                  activitySource === 'fossapay' ? 'bg-primary-action text-white' : 'text-foreground/60 hover:text-primary'
                 }`}
               >
                 FossaPay
@@ -537,7 +537,7 @@ export function PayoutsPanel() {
                 aria-selected={activitySource === 'paj'}
                 onClick={() => setActivitySource('paj')}
                 className={`min-h-8 rounded-pill px-3 text-xs font-semibold transition-colors ${
-                  activitySource === 'paj' ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                  activitySource === 'paj' ? 'bg-primary-action text-white' : 'text-foreground/60 hover:text-primary'
                 }`}
               >
                 Paj Offramps
@@ -552,7 +552,7 @@ export function PayoutsPanel() {
                     aria-pressed={flowFilter === tab}
                     onClick={() => setFlowFilter(tab)}
                     className={`min-h-8 rounded-pill px-3 text-xs font-semibold capitalize transition-colors ${
-                      flowFilter === tab ? 'bg-primary text-white' : 'text-foreground/60 hover:text-primary'
+                      flowFilter === tab ? 'bg-primary-action text-white' : 'text-foreground/60 hover:text-primary'
                     }`}
                   >
                     {tab === 'all' ? 'All' : `${tab}s`}
@@ -575,7 +575,7 @@ export function PayoutsPanel() {
         {activitySource === 'paj' ? (
           <>
             {pajError && (
-              <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+              <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
                 {pajError}
               </p>
             )}
@@ -712,7 +712,7 @@ export function PayoutsPanel() {
           <>
 
         {historyError && (
-          <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700">
+          <p role="alert" className="border-b border-red-200 bg-red-50 px-5 py-3 text-sm text-red-700 dark:border-red-500/30 dark:bg-red-950/45 dark:text-red-300">
             {historyError}
           </p>
         )}
