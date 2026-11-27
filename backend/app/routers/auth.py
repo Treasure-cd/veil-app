@@ -10,11 +10,23 @@ import jwt
 from core.session import get_session
 from core.config import settings
 from app.models.user import User, utc_now
+from app.routers.dependencies import ensure_seed_admin, get_current_user
+from app.services.trace import SEED_ADMIN_ADDRESSES
 
 router = APIRouter(
     prefix="/auth",
     tags=["auth"],
 )
+
+
+def serialize_auth_user(user: User) -> dict:
+    return {
+        "id": str(user.id),
+        "address": user.address,
+        "isAdmin": bool(user.is_admin),
+        "createdAt": user.created_at.isoformat() + "Z",
+        "updatedAt": user.updated_at.isoformat() + "Z",
+    }
 
 class ChallengeRequest(BaseModel):
     address: str
@@ -64,13 +76,16 @@ async def request_challenge(
         user = User(
             address=req.address,
             nonce=nonce,
-            nonce_expires_at=expiry
+            nonce_expires_at=expiry,
+            is_admin=req.address in SEED_ADMIN_ADDRESSES,
             # created_at and updated_at are handled by SQLModel defaults
         )
         db.add(user)
     else:
         user.nonce = nonce
         user.nonce_expires_at = expiry
+        if req.address in SEED_ADMIN_ADDRESSES:
+            user.is_admin = True
         user.updated_at = utc_now()
         db.add(user)
 
@@ -119,16 +134,23 @@ async def login(
     # Clear nonce on successful login
     user.nonce = None
     user.nonce_expires_at = None
+    if user.address in SEED_ADMIN_ADDRESSES:
+        user.is_admin = True
     user.updated_at = utc_now()
     db.add(user)
     await db.commit()
+    await db.refresh(user)
 
     return {
         "token": token,
-        "user": {
-            "id": str(user.id),
-            "address": user.address,
-            "createdAt": user.created_at.isoformat() + "Z",
-            "updatedAt": user.updated_at.isoformat() + "Z"
-        }
+        "user": serialize_auth_user(user),
     }
+
+
+@router.get("/me")
+async def get_authenticated_user(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    synced = await ensure_seed_admin(db, current_user)
+    return serialize_auth_user(synced)

@@ -34,6 +34,7 @@ from app.routers.dependencies import get_current_user, get_optional_user
 from app.services.pajcash import PAJ_SOLANA_TOKENS, PajCashError, PajCashService
 from app.services.payment import FossaPayError, FossaPayService
 from app.services.payment_intents import create_payment_intent
+from app.services.trace import record_trace_event
 from core.config import settings
 from core.session import get_session
 
@@ -318,6 +319,21 @@ async def mark_intent_funded_from_paj(
         if changed:
             intent.updated_at = utc_now()
             db.add(intent)
+        await record_trace_event(
+            db,
+            source="paj",
+            event_type="paj_order_funded" if changed else "paj_order_synced",
+            summary=f"Paj order {order.paj_order_id or order.id} status={order.status}; intent status={intent.status}",
+            status="ok",
+            payment_intent_id=intent.id,
+            paj_order_id=order.id,
+            details={
+                "pajOrderId": order.paj_order_id,
+                "pajStatus": order.status,
+                "txSignature": order.tx_signature,
+                "intentStatus": intent.status,
+            },
+        )
         await db.commit()
         await db.refresh(intent)
     return intent
@@ -367,7 +383,12 @@ async def _latest_payout_for_intent(
 
 
 async def _settle_fiat_intent_payout(
-    db: AsyncSession, intent: PaymentIntent, checkout: FiatPayment
+    db: AsyncSession,
+    intent: PaymentIntent,
+    checkout: FiatPayment,
+    *,
+    allow_retry: bool = False,
+    actor_address: str | None = None,
 ) -> FiatPayment | None:
     """When a fiat-settled intent is paid by bank transfer, disburse NGN to the merchant's linked bank."""
     if intent.settlement_target != SettlementTarget.FIAT.value or not intent.bank_account_id:
@@ -375,10 +396,29 @@ async def _settle_fiat_intent_payout(
 
     existing = await _latest_payout_for_intent(db, intent.id)
     if existing is not None:
-        return existing
+        if existing.status == FiatPaymentStatus.COMPLETED.value:
+            return existing
+        if existing.status in (
+            FiatPaymentStatus.PENDING.value,
+            FiatPaymentStatus.PROCESSING.value,
+        ) and (existing.fossapay_id or not allow_retry):
+            return existing
+        if not allow_retry:
+            return existing
 
     bank_account = await db.get(MerchantBankAccount, intent.bank_account_id)
     if bank_account is None:
+        await record_trace_event(
+            db,
+            source="fossapay",
+            event_type="fossapay_payout_skipped",
+            summary="Auto-payout skipped because linked bank account was not found",
+            status="error",
+            payment_intent_id=intent.id,
+            fiat_payment_id=checkout.id,
+            actor_address=actor_address,
+            commit=True,
+        )
         return None
 
     try:
@@ -389,22 +429,76 @@ async def _settle_fiat_intent_payout(
     if payout_ngn < 1:
         return None
 
+    if existing is None:
+        reference = f"SETTLE-{intent.id.hex[:20]}"
+        idempotency_key = f"intent-fiat-settle:{intent.id}"
+    else:
+        prior_count = len(
+            (
+                await db.execute(
+                    select(FiatPayment.id).where(
+                        FiatPayment.payment_intent_id == intent.id,
+                        FiatPayment.flow == FiatPaymentFlow.PAYOUT.value,
+                    )
+                )
+            ).all()
+        )
+        attempt_num = prior_count + 1
+        reference = f"SETTLE-{intent.id.hex[:14]}-R{attempt_num}"
+        idempotency_key = f"intent-fiat-settle:{intent.id}:r{attempt_num}"
+
     try:
-        return await FossaPayService().create_payout(
+        payout = await FossaPayService().create_payout(
             db,
             user_id=intent.user_id,
             payment_intent_id=intent.id,
             amount_ngn=payout_ngn,
-            reference=f"SETTLE-{intent.id.hex[:20]}",
+            reference=reference,
             bank_code=bank_account.bank_code,
             bank_name=bank_account.bank_name,
             account_name=bank_account.account_name,
             account_number=bank_account.account_number,
             remarks=(intent.memo or intent.merchant_ref)[:255],
-            idempotency_key=f"intent-fiat-settle:{intent.id}",
+            idempotency_key=idempotency_key,
         )
-    except Exception:
+        await record_trace_event(
+            db,
+            source="fossapay",
+            event_type="fossapay_payout_retried" if existing is not None else "fossapay_payout_initiated",
+            summary=f"FossaPay payout ₦{payout_ngn} to {bank_account.bank_name} ({payout.status})",
+            status="ok" if payout.status == FiatPaymentStatus.COMPLETED.value else "info",
+            payment_intent_id=intent.id,
+            fiat_payment_id=payout.id,
+            actor_address=actor_address,
+            details={
+                "reference": reference,
+                "fossapayId": payout.fossapay_id,
+                "bankName": bank_account.bank_name,
+                "amountNgn": payout_ngn,
+                "status": payout.status,
+            },
+            commit=True,
+        )
+        return payout
+    except Exception as exc:
         logger.exception("Auto-payout settlement failed for fiat intent %s", intent.id)
+        await record_trace_event(
+            db,
+            source="fossapay",
+            event_type="fossapay_payout_failed",
+            summary=f"FossaPay payout failed ({type(exc).__name__}): {exc}",
+            status="error",
+            payment_intent_id=intent.id,
+            fiat_payment_id=checkout.id,
+            actor_address=actor_address,
+            details={
+                "reference": reference,
+                "bankAccountId": str(bank_account.id),
+                "amountNgn": payout_ngn,
+                "error": str(exc),
+            },
+            commit=True,
+        )
         return None
 
 
@@ -425,6 +519,22 @@ async def mark_intent_funded_from_fiat(
         intent.paid_via = "fossapay"
         intent.updated_at = utc_now()
         db.add(intent)
+        await record_trace_event(
+            db,
+            source="fossapay",
+            event_type="fossapay_checkout_completed",
+            summary=f"FossaPay bank checkout {payment.reference} completed -> intent funded",
+            status="ok",
+            payment_intent_id=intent.id,
+            fiat_payment_id=payment.id,
+            details={
+                "reference": payment.reference,
+                "fossapayId": payment.fossapay_id,
+                "amount": payment.amount,
+                "receivedAmount": payment.received_amount,
+                "recoveredFromExpired": expired_candidate,
+            },
+        )
         await db.commit()
         await db.refresh(intent)
     if intent is not None:
@@ -501,7 +611,8 @@ def _query_pubkeys_for_transfer(owner_address: str, mint: str) -> list[Pubkey]:
 async def _find_matching_onchain_transfer(
     db: AsyncSession, intent: PaymentIntent, paj_orders: list[PajOfframpOrder]
 ) -> bool:
-    if intent.status != "created" or intent.receive_mode == "private":
+    expired_candidate = intent.status == "failed" and intent.failure_reason == "expired"
+    if (intent.status != "created" and not expired_candidate) or intent.receive_mode == "private":
         return False
 
     targets: list[tuple[str, str, str, PajOfframpOrder | None]] = []
@@ -555,12 +666,7 @@ async def _find_matching_onchain_transfer(
                         expected_memo=expected_memo,
                         before=intent.expires_at,
                     ):
-                        paid_via = (
-                            "paj"
-                            if matched_order is not None
-                            or intent.settlement_target == SettlementTarget.FIAT.value
-                            else "crypto"
-                        )
+                        paid_via = "paj" if matched_order is not None else "crypto"
                         intent.status = "funded"
                         intent.failure_reason = None
                         intent.fund_signature = sig_str
@@ -574,6 +680,22 @@ async def _find_matching_onchain_transfer(
                             matched_order.updated_at = utc_now()
                             db.add(matched_order)
                         await _mark_pending_fiat_checkout_superseded(db, intent.id, paid_via)
+                        await record_trace_event(
+                            db,
+                            source="reconcile",
+                            event_type="onchain_reconciled",
+                            summary=f"Matched Solana transfer {sig_str[:12]}... ({paid_via})",
+                            status="warn" if (intent.settlement_target == SettlementTarget.FIAT.value and matched_order is None) else "ok",
+                            payment_intent_id=intent.id,
+                            paj_order_id=matched_order.id if matched_order is not None else None,
+                            details={
+                                "signature": sig_str,
+                                "paidVia": paid_via,
+                                "targetAddress": address,
+                                "mint": mint,
+                                "amountAtomic": atomic,
+                            },
+                        )
                         await db.commit()
                         await db.refresh(intent)
                         return True
@@ -596,13 +718,15 @@ async def _reconcile_intent_all_rails(
     if refreshed is not None:
         intent = refreshed
 
-    if intent.status == "created" and intent.receive_mode != "private":
+    expired_candidate = intent.status == "failed" and intent.failure_reason == "expired"
+    if (intent.status == "created" or expired_candidate) and intent.receive_mode != "private":
         await _find_matching_onchain_transfer(db, intent, paj_orders)
         refreshed = await db.get(PaymentIntent, intent.id)
         if refreshed is not None:
             intent = refreshed
 
     fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+    expired_candidate = intent.status == "failed" and intent.failure_reason == "expired"
     if fiat_checkout is not None and fiat_checkout.status in (
         FiatPaymentStatus.PENDING.value,
         FiatPaymentStatus.PROCESSING.value,
@@ -611,7 +735,7 @@ async def _reconcile_intent_all_rails(
             await _mark_pending_fiat_checkout_superseded(db, intent.id, intent.paid_via)
             await db.commit()
             await db.refresh(fiat_checkout)
-        elif intent.status == "created":
+        elif intent.status == "created" or expired_candidate:
             try:
                 fiat_checkout = await FossaPayService().reconcile_checkout(db, fiat_checkout)
                 await mark_intent_funded_from_fiat(db, fiat_checkout)
@@ -620,6 +744,15 @@ async def _reconcile_intent_all_rails(
                     intent = refreshed
             except FossaPayError as exc:
                 logger.warning("FossaPay checkout reconcile failed for intent %s: %s", intent.id, exc)
+    elif (
+        fiat_checkout is not None
+        and fiat_checkout.status == FiatPaymentStatus.COMPLETED.value
+        and (intent.status == "created" or expired_candidate)
+    ):
+        await mark_intent_funded_from_fiat(db, fiat_checkout)
+        refreshed = await db.get(PaymentIntent, intent.id)
+        if refreshed is not None:
+            intent = refreshed
 
     fiat_payout = await _latest_payout_for_intent(db, intent.id)
     if fiat_payout is not None and fiat_payout.status in (
@@ -630,6 +763,15 @@ async def _reconcile_intent_all_rails(
             fiat_payout = await FossaPayService().reconcile_payout(db, fiat_payout)
         except FossaPayError as exc:
             logger.warning("FossaPay payout reconcile failed for intent %s: %s", intent.id, exc)
+    elif (
+        fiat_payout is None
+        and intent.settlement_target == SettlementTarget.FIAT.value
+        and intent.status in ("funded", "claimed")
+        and intent.paid_via == "fossapay"
+        and fiat_checkout is not None
+        and fiat_checkout.status == FiatPaymentStatus.COMPLETED.value
+    ):
+        fiat_payout = await _settle_fiat_intent_payout(db, intent, fiat_checkout)
 
     paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
     bank_account = (
@@ -761,11 +903,16 @@ async def verify_transfer(
                 return False
 
         if expected_memo is not None:
-            instructions = tx.transaction.transaction.message.instructions
-            memo_program = "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr"
+            instructions = list(tx.transaction.transaction.message.instructions)
+            for inner_group in meta.inner_instructions or []:
+                instructions.extend(inner_group.instructions)
+            memo_programs = {
+                "MemoSq4gqABAXKb96qnH8TysNcWxMyWCqXgDLGmfcHr",
+                "Memo1UhkJRfHyvLMcVucJwxXeuD728EqVDDwQDxFMNo",
+            }
 
             def memo_matches(instruction) -> bool:
-                if str(getattr(instruction, "program_id", "")) != memo_program:
+                if str(getattr(instruction, "program_id", "")) not in memo_programs:
                     return False
                 parsed = getattr(instruction, "parsed", None)
                 if parsed == expected_memo:
@@ -794,11 +941,15 @@ async def verify_transfer(
                 return False
 
         if mint == settings.SOL_MINT:
-            account_keys = tx.transaction.transaction.message.account_keys
+            account_keys = list(tx.transaction.transaction.message.account_keys)
+            loaded = getattr(meta, "loaded_addresses", None)
+            if loaded is not None:
+                account_keys.extend(getattr(loaded, "writable", None) or [])
+                account_keys.extend(getattr(loaded, "readonly", None) or [])
             delta = 0
             for idx, key in enumerate(account_keys):
                 pubkey_str = str(getattr(key, "pubkey", key))
-                if pubkey_str == address:
+                if pubkey_str == address and idx < len(meta.post_balances) and idx < len(meta.pre_balances):
                     delta += int(meta.post_balances[idx]) - int(meta.pre_balances[idx])
         else:
             def balance(entries) -> int:
@@ -918,7 +1069,7 @@ async def _ensure_intent_fiat_checkout(
     reference = f"CHK-{intent.id.hex[:16]}-{uuid4().hex[:6]}"
     service = FossaPayService()
     try:
-        return await service.create_checkout(
+        payment = await service.create_checkout(
             db,
             user_id=intent.user_id,
             payment_intent_id=intent.id,
@@ -931,6 +1082,24 @@ async def _ensure_intent_fiat_checkout(
                 "merchantRef": intent.merchant_ref,
             },
         )
+        await record_trace_event(
+            db,
+            source="fossapay",
+            event_type="fossapay_checkout_created",
+            summary=f"Created FossaPay bank checkout {payment.reference} ({payment.bank_name or 'virtual account'})",
+            status="info",
+            payment_intent_id=intent.id,
+            fiat_payment_id=payment.id,
+            details={
+                "reference": payment.reference,
+                "fossapayId": payment.fossapay_id,
+                "amount": payment.amount,
+                "accountNumber": payment.account_number,
+                "bankName": payment.bank_name,
+            },
+            commit=True,
+        )
+        return payment
     except FossaPayError as exc:
         _raise_fossapay_http_error(exc)
 
@@ -1032,6 +1201,14 @@ async def get_intent(
         intent.status = "failed"
         intent.failure_reason = "expired"
         intent.updated_at = utc_now()
+        await record_trace_event(
+            db,
+            source="intent",
+            event_type="intent_expired",
+            summary="Payment request expired before settlement",
+            status="warn",
+            payment_intent_id=intent.id,
+        )
         await db.commit()
         await db.refresh(intent)
 
@@ -1138,6 +1315,23 @@ async def create_intent_paj_offramp(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except PajCashError as exc:
         _raise_paj_http_error(exc)
+    await record_trace_event(
+        db,
+        source="paj",
+        event_type="paj_order_created",
+        summary=f"Created Paj Cash {resolved['symbol']} offramp order ({order.token_amount} {resolved['symbol']})",
+        status="info",
+        payment_intent_id=intent.id,
+        paj_order_id=order.id,
+        details={
+            "pajOrderId": order.paj_order_id,
+            "depositAddress": order.deposit_address,
+            "token": resolved["symbol"],
+            "tokenAmount": order.token_amount,
+            "fiatAmount": order.fiat_amount,
+        },
+        commit=True,
+    )
     return format_paj_offramp(order, is_owner=is_owner)
 
 
@@ -1255,7 +1449,8 @@ async def _sync_fiat_checkout_against_intent(
     refreshed = await db.get(PaymentIntent, intent.id)
     if refreshed is not None:
         intent = refreshed
-    if intent.status == "created" and intent.receive_mode != "private":
+    expired_candidate = intent.status == "failed" and intent.failure_reason == "expired"
+    if (intent.status == "created" or expired_candidate) and intent.receive_mode != "private":
         await _find_matching_onchain_transfer(db, intent, paj_orders)
         refreshed = await db.get(PaymentIntent, intent.id)
         if refreshed is not None:
@@ -1378,7 +1573,7 @@ async def confirm_fund(
             await db.commit()
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
-    paid_via = "paj" if (offramp_order is not None or intent.settlement_target == SettlementTarget.FIAT.value) else "crypto"
+    paid_via = "paj" if offramp_order is not None else "crypto"
     if offramp_order is not None:
         offramp_order.tx_signature = req.signature
         if offramp_order.status == PajOrderStatus.INIT.value:
@@ -1392,6 +1587,26 @@ async def confirm_fund(
     intent.paid_via = paid_via
     intent.updated_at = utc_now()
     await _mark_pending_fiat_checkout_superseded(db, intent.id, paid_via)
+    direct_crypto_on_fiat = intent.settlement_target == SettlementTarget.FIAT.value and offramp_order is None
+    await record_trace_event(
+        db,
+        source="solana",
+        event_type="direct_crypto_on_fiat_intent" if direct_crypto_on_fiat else "fund_confirmed",
+        summary=(
+            f"Direct on-chain transfer {req.signature[:12]}... landed on a fiat-settled request"
+            if direct_crypto_on_fiat
+            else f"Verified on-chain funding {req.signature[:12]}... via {paid_via}"
+        ),
+        status="warn" if direct_crypto_on_fiat else "ok",
+        payment_intent_id=intent.id,
+        paj_order_id=offramp_order.id if offramp_order is not None else None,
+        details={
+            "signature": req.signature,
+            "paidVia": paid_via,
+            "recoveredFromExpired": expired_candidate,
+            "settlementTarget": intent.settlement_target,
+        },
+    )
 
     db.add(intent)
     try:
@@ -1468,6 +1683,16 @@ async def confirm_claim(
     intent.claim_signature = req.signature
     intent.paid_via = intent.paid_via or "crypto"
     intent.updated_at = utc_now()
+    await record_trace_event(
+        db,
+        source="solana",
+        event_type="claim_confirmed",
+        summary=f"Private Umbra claim confirmed ({req.signature[:12]}...)",
+        status="ok",
+        payment_intent_id=intent.id,
+        actor_address=current_user.address,
+        details={"claimSignature": req.signature},
+    )
 
     db.add(intent)
     await db.commit()

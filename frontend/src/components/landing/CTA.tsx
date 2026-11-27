@@ -30,7 +30,7 @@ export default function CTA() {
           transition={{ duration: 14, repeat: Infinity, ease: 'easeInOut' }}
         />
 
-        <div className="relative mx-auto max-w-6xl">
+        <div className="relative mx-auto max-w-7xl">
           <motion.p
             initial={{ opacity: 0 }}
             whileInView={{ opacity: 1 }}

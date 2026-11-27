@@ -1,6 +1,7 @@
 export interface AuthUser {
   id: string
   address: string
+  isAdmin?: boolean
   createdAt: string
   updatedAt: string
 }

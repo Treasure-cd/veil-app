@@ -16,6 +16,7 @@ from app.routers.dependencies import get_current_user
 from app.models.user import User
 from app.models.payroll import PayrollGroup, PayrollLink, utc_now_naive
 from app.services.rates import get_rates
+from app.services.trace import record_trace_event
 from solana.rpc.async_api import AsyncClient
 from solders.signature import Signature
 from solders.transaction_status import TransactionConfirmationStatus
@@ -420,6 +421,20 @@ async def lock_vault(
     group.updated_at = utc_now_naive()
 
     db.add(group)
+    await record_trace_event(
+        db,
+        source="payroll",
+        event_type="payroll_locked",
+        summary=f"Payroll '{group.title}' vault locked ({req.vaultSignature[:12]}...)",
+        status="ok",
+        payroll_group_id=group.id,
+        actor_address=current_user.address,
+        details={
+            "vaultSignature": req.vaultSignature,
+            "recipientCount": len(recipients),
+            "rateNgnPerSol": str(rate),
+        },
+    )
     await db.commit()
     await db.refresh(group)
     return await format_group_with_estimate(group)
@@ -479,6 +494,16 @@ async def release_payroll(
     group.updated_at = utc_now_naive()
 
     db.add(group)
+    await record_trace_event(
+        db,
+        source="payroll",
+        event_type="payroll_released",
+        summary=f"Payroll '{group.title}' released ({req.releaseSignature[:12]}...)",
+        status="ok",
+        payroll_group_id=group.id,
+        actor_address=current_user.address,
+        details={"releaseSignature": req.releaseSignature},
+    )
     await db.commit()
     await db.refresh(group)
     return await format_group_with_estimate(group)

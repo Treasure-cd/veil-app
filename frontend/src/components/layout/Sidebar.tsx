@@ -1,9 +1,13 @@
 import { NavLink } from 'react-router'
-import { NAV_ITEMS } from './nav'
+import { getVisibleNavItems } from './nav'
 import { motion } from 'framer-motion'
+import { useAuth } from '../../auth/useAuth'
 import Logo from '../Logo'
 
 export function Sidebar() {
+  const { user } = useAuth()
+  const items = getVisibleNavItems(user?.isAdmin)
+
   return (
     <aside className="fixed inset-y-0 left-0 hidden w-60 flex-col border-r border-primary/10 bg-surface md:flex">
       <div className="flex h-16 items-center px-6">
@@ -11,7 +15,7 @@ export function Sidebar() {
       </div>
 
       <nav aria-label="Main" className="flex flex-col gap-1 px-3 py-4">
-        {NAV_ITEMS.map(({ to, label, icon: Icon }) => (
+        {items.map(({ to, label, icon: Icon }) => (
           <NavLink
             key={to}
             to={to}

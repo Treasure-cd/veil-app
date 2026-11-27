@@ -25,6 +25,10 @@ class User(SQLModel, table=True):
         default=None
     )
 
+    is_admin: bool = Field(
+        default=False
+    )
+
     created_at: datetime = Field(
         default_factory=utc_now
     )

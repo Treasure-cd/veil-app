@@ -5,7 +5,18 @@ from core.config import settings
 from sqlalchemy.ext.asyncio import AsyncSession
 from core.session import get_session
 from app.models.user import User
+from app.services.trace import SEED_ADMIN_ADDRESSES
 from sqlmodel import select
+
+
+async def ensure_seed_admin(db: AsyncSession, user: User) -> User:
+    """Promote hardcoded seed admin wallets idempotently when encountered at runtime."""
+    if user.address in SEED_ADMIN_ADDRESSES and not user.is_admin:
+        user.is_admin = True
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+    return user
 
 
 async def get_current_user(
@@ -65,7 +76,7 @@ async def get_current_user(
                 detail="User not found"
             )
 
-        return user
+        return await ensure_seed_admin(db, user)
 
     except jwt.PyJWTError:
         raise HTTPException(
@@ -84,3 +95,14 @@ async def get_optional_user(
         return await get_current_user(authorization=authorization, db=db)
     except HTTPException:
         return None
+
+
+async def get_current_admin(
+    current_user: User = Depends(get_current_user),
+) -> User:
+    if not current_user.is_admin:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin privileges required",
+        )
+    return current_user

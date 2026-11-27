@@ -32,6 +32,7 @@ import {
 interface PaymentIntent {
   id: string
   amount_ngn: string
+  amount_token?: string | null
   amountAtomic: string
   recipientAddress: string
   receiveMode: 'public' | 'private'
@@ -295,7 +296,9 @@ export default function Payments() {
       setGeneratedPayment({
         id: intent.id,
         amountNgn: intent.amount_ngn,
-        tokenAmount: (Number(intent.amountAtomic) / 1e6).toString(),
+        tokenAmount:
+          intent.amount_token ??
+          (Number(intent.amountAtomic) / 1e6).toString(),
         status: intent.status ?? 'created',
         paidVia: intent.paidVia ?? null,
         fiatCheckout: intent.fiatCheckout ?? null,
@@ -361,7 +364,7 @@ export default function Payments() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl space-y-6">
+    <div className="w-full space-y-6">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-primary">
@@ -577,7 +580,7 @@ export default function Payments() {
             </p>
           )}
 
-          <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr]">
+          <div className="grid gap-5 lg:grid-cols-[1.2fr_0.8fr] 2xl:grid-cols-[1.3fr_0.7fr]">
             <section className="space-y-5 rounded-panel border border-primary/10 bg-surface p-5 shadow-veil-sm sm:p-6">
               <div className="space-y-1.5">
                 <label htmlFor="payment-memo" className="text-sm font-medium">Description</label>

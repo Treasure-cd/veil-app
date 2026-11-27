@@ -14,13 +14,14 @@ function NetworkBadge() {
   return (
     <span
       title={`Solana ${NETWORK_LABEL[cluster]} · USDC mint ${USDC_MINT}`}
-      className="inline-flex h-9 items-center gap-2 rounded-pill border border-primary/10 bg-surface px-3 text-sm font-medium"
+      aria-label={`Solana ${NETWORK_LABEL[cluster]}`}
+      className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-pill border border-primary/10 bg-surface px-2 text-sm font-medium sm:h-9 sm:px-2.5 lg:gap-2 lg:px-3"
     >
       <span
         className={`size-2 rounded-full ${IS_MAINNET ? 'bg-emerald-500' : 'bg-amber-500'}`}
         aria-hidden="true"
       />
-      <span>{NETWORK_LABEL[cluster]}</span>
+      <span className="hidden lg:inline">{NETWORK_LABEL[cluster]}</span>
     </span>
   )
 }
@@ -59,21 +60,22 @@ export function Header() {
   }
 
   return (
-    <header className="sticky top-0 z-10 flex h-16 items-center gap-2 border-b border-primary/5 bg-background/80 px-4 backdrop-blur-md md:gap-3 md:px-8">
+    <header className="sticky top-0 z-10 flex h-16 items-center gap-1 border-b border-primary/5 bg-background/80 px-2.5 backdrop-blur-md sm:gap-2 sm:px-4 md:gap-3 md:px-8 lg:px-10">
       {/* The sidebar carries the logo on desktop; on mobile it lives here. */}
-      <Logo className="h-5 md:hidden" />
+      <Logo className="h-4 shrink-0 sm:h-5 md:hidden" />
 
-      <div className="ml-auto flex items-center gap-2 md:gap-3">
+      <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2 md:gap-3">
         <ThemeToggle />
         <MoneyDisplayToggle />
         <NetworkBadge />
         <Button
           size="sm"
+          className="hidden sm:inline-flex"
           aria-label="New request"
           leftIcon={<Plus size={16} weight="bold" />}
           onClick={() => navigate('/payments')}
         >
-          <span className="hidden sm:inline">New request</span>
+          <span className="hidden lg:inline">New request</span>
         </Button>
         {/* Wallet stays on the far right as the user profile anchor */}
         <div className="relative" ref={walletMenuRef}>

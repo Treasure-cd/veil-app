@@ -99,7 +99,7 @@ function relativeTime(value: string) {
 
 function DashboardSkeleton() {
   return (
-    <div className="mx-auto max-w-6xl animate-pulse space-y-6" role="status" aria-label="Loading dashboard">
+    <div className="w-full animate-pulse space-y-6" role="status" aria-label="Loading dashboard">
       <div className="h-8 w-44 rounded bg-primary/10" />
       <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         {Array.from({ length: 4 }, (_, index) => <div key={index} className="h-32 rounded-panel border border-primary/10 bg-surface" />)}
@@ -210,7 +210,7 @@ export default function Dashboard() {
   const change = data.volume_change_percent === null ? null : Number(data.volume_change_percent)
 
   return (
-    <div className="mx-auto max-w-6xl space-y-6 pb-8">
+    <div className="w-full space-y-6 pb-8">
       <header className="flex flex-wrap items-end justify-between gap-4">
         <div>
           <h1 className="text-3xl font-semibold tracking-tight text-primary">Dashboard</h1>
@@ -320,8 +320,8 @@ export default function Dashboard() {
                       item.settlement_status === 'settling' ||
                       item.settlement_status === 'awaiting_claim'
                     return (
-                      <li key={item.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
-                        <div className="min-w-0">
+                      <li key={item.id} className="flex flex-wrap items-center justify-between gap-3 px-5 py-3.5 sm:flex-nowrap sm:gap-4">
+                        <div className="min-w-0 flex-1">
                           <div className="flex flex-wrap items-center gap-2">
                             <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
                             <span className={`inline-flex rounded-pill px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>
@@ -333,7 +333,7 @@ export default function Dashboard() {
                             {railLabel ? ` · ${railLabel}` : ''} · {relativeTime(item.created_at)}
                           </p>
                         </div>
-                        <div className="flex shrink-0 items-center gap-3">
+                        <div className="flex shrink-0 items-center gap-3 ml-auto">
                           {canReconcile && (
                             <Button
                               size="sm"

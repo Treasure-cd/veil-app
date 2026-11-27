@@ -7,7 +7,7 @@ from loguru import logger
 from core.config import settings
 from app import models
 from core.session import engine
-from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts
+from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin
 from core.session import engine
 
 
@@ -65,6 +65,7 @@ app.include_router(dashboard.router, prefix="/v1")
 app.include_router(rates.router, prefix="/v1")
 app.include_router(whatsapp.router, prefix="/v1")
 app.include_router(whatsapp_accounts.router, prefix="/v1")
+app.include_router(admin.router, prefix="/v1")
 
 @app.get("/")
 async def root():

@@ -11,6 +11,7 @@ from app.models.merchant import OnboardingStage, Merchant
 from app.models.user import User
 from app.models.payment import PaymentIntent
 from app.routers.payments import mark_intent_funded_from_fiat, mark_intent_funded_from_paj
+from app.services.trace import record_trace_event
 from app.services.message_service import send_msg
 from app.services.merchant_service import create_merchant
 from app.services.pajcash import PajCashService, verify_paj_webhook
@@ -278,6 +279,25 @@ async def fossapay_webhook(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     if payment is not None:
+        await record_trace_event(
+            db,
+            source="webhook",
+            event_type="fossapay_webhook",
+            summary=f"FossaPay webhook {payload.get('eventType')} -> {payment.status}",
+            status="error" if payment.status in ("failed", "reversed") else "ok",
+            payment_intent_id=payment.payment_intent_id,
+            fiat_payment_id=payment.id,
+            details={
+                "eventId": payload.get("eventId"),
+                "eventType": payload.get("eventType"),
+                "flow": payment.flow,
+                "reference": payment.reference,
+                "status": payment.status,
+                "accepted": accepted,
+                "failureReason": payment.failure_reason,
+            },
+            commit=True,
+        )
         await mark_intent_funded_from_fiat(db, payment)
 
     return {"status": "ok", "accepted": accepted}
@@ -304,6 +324,22 @@ async def pajcash_webhook(
 
     order = await PajCashService().process_ramp_webhook(db, payload)
     if order is not None:
+        await record_trace_event(
+            db,
+            source="webhook",
+            event_type="paj_webhook",
+            summary=f"Paj Cash webhook -> {order.status}",
+            status="error" if order.status == "ERROR" else "ok",
+            payment_intent_id=order.payment_intent_id,
+            paj_order_id=order.id,
+            details={
+                "pajOrderId": order.paj_order_id,
+                "status": order.status,
+                "txSignature": order.tx_signature,
+                "failureReason": order.failure_reason,
+            },
+            commit=True,
+        )
         await mark_intent_funded_from_paj(db, order)
 
     return {"status": "ok", "matched": order is not None}

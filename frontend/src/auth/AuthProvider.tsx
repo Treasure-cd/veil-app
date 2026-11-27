@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { configureApi, ApiError } from '../services/api'
-import { buildLoginMessage, encodeSignature, login, requestChallenge } from './auth.api'
+import { buildLoginMessage, encodeSignature, fetchMe, login, requestChallenge } from './auth.api'
 import { clearSession, getTokenExpiry, loadSession, saveSession } from './auth.storage'
 import type { Session, SignInStep } from './auth.types'
 import { AuthContext, type AuthContextValue } from './useAuth.ts'
@@ -65,6 +65,30 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const id = setTimeout(() => applySession(null), Math.min(ms, MAX_TIMEOUT))
     return () => clearTimeout(id)
   }, [session, applySession])
+
+  // Sync current user profile (e.g. admin role grants) in background for existing sessions.
+  const syncedTokenRef = useRef<string | null>(null)
+  useEffect(() => {
+    const token = session?.token
+    if (!token || syncedTokenRef.current === token) return
+    syncedTokenRef.current = token
+    let cancelled = false
+    void fetchMe()
+      .then((freshUser) => {
+        if (cancelled) return
+        const latest = sessionRef.current
+        if (!latest || latest.token !== token) return
+        if (latest.user.isAdmin !== freshUser.isAdmin || latest.user.updatedAt !== freshUser.updatedAt) {
+          applySession({ token: latest.token, user: freshUser })
+        }
+      })
+      .catch(() => {
+        // Ignore transient offline errors; 401 is handled via configureApi.onUnauthorized
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [session?.token, applySession])
 
   // On reload, there may be no public key until the wallet adapter restores its connection.
   // Keep the persisted session during that gap, but clear it if an active wallet disconnects

@@ -138,7 +138,7 @@ export default function WhatsAppMockup() {
   const showTyping = count < MESSAGES.length && upcoming?.from === 'bot'
 
   return (
-    <div className="w-[300px] shrink-0 overflow-hidden rounded-[40px] border-[7px] border-[#1a0a20] bg-[#1a0a20] shadow-[0_32px_80px_rgba(46,0,66,0.35)]">
+    <div className="w-full max-w-[300px] shrink-0 overflow-hidden rounded-[40px] border-[7px] border-[#1a0a20] bg-[#1a0a20] shadow-[0_32px_80px_rgba(46,0,66,0.35)]">
       {/* status bar */}
       <div className="flex h-7 items-center justify-between px-5">
         <span className="text-[9px] font-medium text-white">9:41</span>
