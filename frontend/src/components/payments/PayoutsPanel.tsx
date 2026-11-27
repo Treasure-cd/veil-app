@@ -273,7 +273,18 @@ export function PayoutsPanel() {
       const updated = await expireFiatPayment(payment.id)
       setHistory((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
     } catch (err) {
-      setHistoryError(err instanceof Error ? err.message : 'Could not expire checkout.')
+      const message = err instanceof Error ? err.message : 'Could not expire checkout.'
+      if (/only a pending checkout can be expired|current status is/i.test(message)) {
+        try {
+          const synced = await reconcileFiatPayment(payment.id)
+          setHistory((prev) => prev.map((item) => (item.id === synced.id ? synced : item)))
+          if (synced.status === 'expired') return
+        } catch {
+          // Fall back to reporting the expire error and reloading list.
+        }
+      }
+      setHistoryError(message)
+      void loadHistory()
     } finally {
       setBusyRowId(null)
     }

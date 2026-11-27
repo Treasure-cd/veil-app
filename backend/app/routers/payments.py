@@ -1216,6 +1216,8 @@ async def expire_fiat_payment(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except FossaPayError as exc:
+        if payment.status == FiatPaymentStatus.COMPLETED.value:
+            await mark_intent_funded_from_fiat(db, payment)
         _raise_fossapay_http_error(exc)
     return format_fiat_payment(updated, is_owner=True)
 

@@ -506,9 +506,29 @@ class FossaPayService:
         """Manually expire a pending FossaPay checkout wallet."""
         if payment.flow != FiatPaymentFlow.CHECKOUT.value or not payment.fossapay_id:
             raise ValueError("Checkout has no FossaPay ID to expire")
-        res = await self._request(
-            "POST", f"/api/v1/checkouts/{payment.fossapay_id}/expire"
-        )
+        if payment.status == FiatPaymentStatus.EXPIRED.value:
+            return payment
+        try:
+            res = await self._request(
+                "POST", f"/api/v1/checkouts/{payment.fossapay_id}/expire"
+            )
+        except FossaPayError as exc:
+            # Upstream may have already auto-expired (or settled) the virtual account before local sync.
+            msg_lower = exc.message.lower()
+            if 400 <= exc.status_code < 500 and (
+                "only a pending checkout can be expired" in msg_lower
+                or "current status is" in msg_lower
+            ):
+                reconciled = await self.reconcile_checkout(db, payment)
+                if reconciled.status == FiatPaymentStatus.EXPIRED.value:
+                    return reconciled
+                raise FossaPayError(
+                    exc.message,
+                    status_code=409,
+                    code=exc.code,
+                    payload=exc.payload,
+                ) from exc
+            raise
         _apply_checkout_data(payment, res["data"])
         db.add(payment)
         await db.commit()

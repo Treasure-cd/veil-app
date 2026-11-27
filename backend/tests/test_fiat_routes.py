@@ -319,6 +319,59 @@ class FiatRouterTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(payload["fiatCheckout"]["settlementAmount"], "1900.00")
             self.assertEqual(payload["fiatCheckout"]["accountNumber"], "9712110999")
 
+    async def test_expire_fiat_checkout_reconciles_completed_intent_on_conflict(self) -> None:
+        async with self.session_factory() as db:
+            intent = PaymentIntent(
+                user_id=self.user.id,
+                merchant_ref="INV-EXPIRE-COMP-1",
+                mint=settings.USDC_MINT,
+                amount_atomic="1000000",
+                amount_ngn="2000",
+                recipient_address=self.user.address,
+                receive_mode="public",
+                memo="Expire vs complete race",
+            )
+            db.add(intent)
+            await db.commit()
+            await db.refresh(intent)
+
+            fiat_row = FiatPayment(
+                user_id=self.user.id,
+                payment_intent_id=intent.id,
+                flow=FiatPaymentFlow.CHECKOUT.value,
+                reference="CHK-EXPIRE-RACE-1",
+                idempotency_key=str(uuid4()),
+                fossapay_id=str(uuid4()),
+                amount="2000.00",
+                status=FiatPaymentStatus.PENDING.value,
+            )
+            db.add(fiat_row)
+            await db.commit()
+            await db.refresh(fiat_row)
+
+        async def fake_expire_completed(service, db_session, payment):
+            payment.status = FiatPaymentStatus.COMPLETED.value
+            db_session.add(payment)
+            await db_session.commit()
+            await db_session.refresh(payment)
+            from app.services.payment import FossaPayError
+
+            raise FossaPayError(
+                "Only a pending checkout can be expired; current status is completed",
+                status_code=409,
+            )
+
+        with patch("app.routers.payments.FossaPayService.expire_checkout", new=fake_expire_completed):
+            res = self.client.post(
+                f"/v1/payments/fiat/{fiat_row.id}/expire",
+                headers={"Authorization": f"Bearer {self.token}"},
+            )
+            self.assertEqual(res.status_code, 409)
+
+        async with self.session_factory() as db:
+            refreshed_intent = await db.get(PaymentIntent, intent.id)
+            self.assertEqual(refreshed_intent.status, "funded")
+
 
 if __name__ == "__main__":
     unittest.main()

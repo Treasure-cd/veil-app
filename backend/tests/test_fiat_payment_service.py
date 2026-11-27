@@ -535,6 +535,101 @@ class FiatPaymentServiceTests(unittest.IsolatedAsyncioTestCase):
                         reference="ORDER-CONFLICT-1",
                     )
 
+    async def test_expire_checkout_syncs_when_upstream_already_expired_or_completed(self) -> None:
+        expired_id = "c2c4be28-3c59-4db1-b99f-f14a5b20e001"
+        completed_id = "c2c4be28-3c59-4db1-b99f-f14a5b20e002"
+        self.mock_responses[("POST", "/api/v1/checkouts")] = (
+            201,
+            {
+                "status": "success",
+                "data": {
+                    "id": expired_id,
+                    "reference": "CHK-EXPIRE-SYNC-1",
+                    "status": "pending",
+                    "amount": "2000.00",
+                    "fee": "50.00",
+                    "amountPayable": "2050.00",
+                    "settlementAmount": "2000.00",
+                    "feeBearer": "customer",
+                },
+            },
+        )
+        self.mock_responses[("POST", f"/api/v1/checkouts/{expired_id}/expire")] = (
+            400,
+            {"message": "Only a pending checkout can be expired; current status is expired"},
+        )
+        self.mock_responses[("GET", f"/api/v1/checkouts/{expired_id}")] = (
+            200,
+            {
+                "status": "success",
+                "data": {
+                    "id": expired_id,
+                    "reference": "CHK-EXPIRE-SYNC-1",
+                    "status": "expired",
+                    "amount": "2000.00",
+                },
+            },
+        )
+        self.mock_responses[("POST", f"/api/v1/checkouts/{completed_id}/expire")] = (
+            400,
+            {"message": "Only a pending checkout can be expired; current status is completed"},
+        )
+        self.mock_responses[("GET", f"/api/v1/checkouts/{completed_id}")] = (
+            200,
+            {
+                "status": "success",
+                "data": {
+                    "id": completed_id,
+                    "reference": "CHK-COMPLETE-SYNC-2",
+                    "status": "completed",
+                    "amount": "3000.00",
+                    "completedAt": "2026-11-27T12:00:00.000Z",
+                },
+            },
+        )
+
+        async with aiohttp.ClientSession() as http_session:
+            service = FossaPayService(
+                api_key="fk_test_key",
+                base_url=self.base_url,
+                session=http_session,
+            )
+            async with self.session_factory() as db:
+                expired_row = await service.create_checkout(
+                    db,
+                    user_id=self.user_id,
+                    amount_ngn=2000,
+                    reference="CHK-EXPIRE-SYNC-1",
+                )
+                synced_expired = await service.expire_checkout(db, expired_row)
+                self.assertEqual(synced_expired.status, FiatPaymentStatus.EXPIRED.value)
+                # Idempotent when already expired locally
+                self.assertEqual((await service.expire_checkout(db, synced_expired)).status, FiatPaymentStatus.EXPIRED.value)
+
+                self.mock_responses[("POST", "/api/v1/checkouts")] = (
+                    201,
+                    {
+                        "status": "success",
+                        "data": {
+                            "id": completed_id,
+                            "reference": "CHK-COMPLETE-SYNC-2",
+                            "status": "pending",
+                            "amount": "3000.00",
+                        },
+                    },
+                )
+                completed_row = await service.create_checkout(
+                    db,
+                    user_id=self.user_id,
+                    amount_ngn=3000,
+                    reference="CHK-COMPLETE-SYNC-2",
+                )
+                with self.assertRaises(FossaPayError) as exc_ctx:
+                    await service.expire_checkout(db, completed_row)
+                self.assertEqual(exc_ctx.exception.status_code, 409)
+                await db.refresh(completed_row)
+                self.assertEqual(completed_row.status, FiatPaymentStatus.COMPLETED.value)
+
 
 if __name__ == "__main__":
     unittest.main()
