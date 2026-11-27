@@ -130,6 +130,13 @@ export function getFiatStatusPresentation(
   status: FiatPaymentStatus,
   outcome?: string | null,
 ): { label: string; className: string } {
+  if (outcome === 'paid_via_paj') {
+    return { label: 'Paid via Paj (crypto)', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' }
+  }
+  if (outcome === 'paid_via_crypto') {
+    return { label: 'Paid on-chain', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' }
+  }
+
   switch (status) {
     case 'completed':
       return { label: 'Completed', className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300' }

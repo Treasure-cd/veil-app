@@ -1,6 +1,8 @@
 import { api } from './api'
+import type { FiatPayment } from './fiat'
 
 export type SettlementTarget = 'crypto' | 'fiat'
+export type PaidViaRail = 'crypto' | 'paj' | 'fossapay'
 export type PajOrderStatus = 'INIT' | 'PROCESSING' | 'COMPLETED' | 'ERROR'
 
 export interface PajBank {
@@ -113,6 +115,31 @@ export function createIntentPajOfframp(intentId: string, token: string) {
       method: 'POST',
       body: JSON.stringify({ token }),
     },
+  )
+}
+
+export interface ReconciledIntent {
+  id: string
+  merchantRef?: string
+  mint?: string
+  amountAtomic: string
+  amount_ngn: string
+  amount_token?: string | null
+  recipientAddress: string
+  receiveMode: 'public' | 'private'
+  settlementTarget: SettlementTarget
+  paidVia: PaidViaRail | null
+  status: 'created' | 'funded' | 'claimed' | 'failed'
+  fiatCheckout: FiatPayment | null
+  pajOfframp: PajOfframpOrder | null
+  bankAccount: MerchantBankAccount | null
+  fiatPayout?: FiatPayment | { status: string; bankName?: string | null } | null
+}
+
+export function reconcileIntent(intentId: string) {
+  return api<ReconciledIntent>(
+    `/v1/payments/intents/${encodeURIComponent(intentId)}/reconcile`,
+    { method: 'POST' },
   )
 }
 

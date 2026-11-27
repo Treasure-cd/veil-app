@@ -5,7 +5,14 @@ from fastapi import APIRouter, Depends
 from sqlalchemy import Numeric, case, cast, func, literal, literal_column, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.payment import PaymentIntent
+from app.models.payment import (
+    FiatPayment,
+    FiatPaymentFlow,
+    PajOfframpOrder,
+    PajOrderStatus,
+    PaymentIntent,
+    SettlementTarget,
+)
 from app.models.user import User
 from app.routers.dependencies import get_current_user
 from core.config import settings
@@ -66,6 +73,133 @@ def _token_amount(atomic: str, symbol: str) -> str:
         return _fmt(Decimal(atomic) / (Decimal(10) ** decimals))
     except (TypeError, ValueError):
         return "0"
+
+
+def _resolve_paid_via(
+    intent: PaymentIntent,
+    paj_order: PajOfframpOrder | None,
+    fiat_checkout: FiatPayment | None,
+) -> str | None:
+    if intent.paid_via is not None:
+        return intent.paid_via
+    if paj_order and paj_order.status in (PajOrderStatus.PROCESSING.value, PajOrderStatus.COMPLETED.value):
+        return "paj"
+    if fiat_checkout and fiat_checkout.status == "completed":
+        return "fossapay"
+    if intent.fund_signature:
+        return "paj" if intent.settlement_target == SettlementTarget.FIAT.value else "crypto"
+    return None
+
+
+def _resolve_settlement_status(
+    intent: PaymentIntent,
+    paj_order: PajOfframpOrder | None,
+    fiat_payout: FiatPayment | None,
+) -> str:
+    if intent.settlement_target != SettlementTarget.FIAT.value:
+        if intent.status == "failed":
+            return "expired" if intent.failure_reason == "expired" else "failed"
+        if intent.receive_mode == "private":
+            if intent.status == "claimed":
+                return "settled"
+            if intent.status == "funded":
+                return "awaiting_claim"
+            return "pending"
+        return "settled" if intent.status == "funded" else "pending"
+
+    if paj_order is not None:
+        if paj_order.status == PajOrderStatus.COMPLETED.value:
+            return "settled"
+        if paj_order.status == PajOrderStatus.PROCESSING.value:
+            return "settling"
+        if paj_order.status == PajOrderStatus.ERROR.value:
+            return "failed"
+        return "settling" if intent.status == "funded" else "pending"
+    if fiat_payout is not None:
+        if fiat_payout.status == "completed":
+            return "settled"
+        if fiat_payout.status in ("pending", "processing"):
+            return "settling"
+        return "failed"
+    if intent.status in ("funded", "claimed"):
+        return "settling"
+    if intent.status == "failed":
+        return "expired" if intent.failure_reason == "expired" else "failed"
+    return "pending"
+
+
+async def _load_recent_activity(db: AsyncSession, uid, ngn) -> list[dict]:
+    recent_rows = (await db.execute(
+        select(PaymentIntent, ngn.label("amount_ngn"))
+        .where(PaymentIntent.user_id == uid)
+        .order_by(PaymentIntent.created_at.desc())
+        .limit(10)
+    )).all()
+    recent_ids = [intent.id for intent, _ in recent_rows]
+
+    paj_priority = {
+        PajOrderStatus.COMPLETED.value: 0,
+        PajOrderStatus.PROCESSING.value: 1,
+        PajOrderStatus.INIT.value: 2,
+        PajOrderStatus.ERROR.value: 3,
+    }
+    paj_by_intent: dict = {}
+    checkout_by_intent: dict = {}
+    payout_by_intent: dict = {}
+
+    if recent_ids:
+        paj_rows = (await db.execute(
+            select(PajOfframpOrder)
+            .where(PajOfframpOrder.payment_intent_id.in_(recent_ids))
+            .order_by(PajOfframpOrder.updated_at.desc(), PajOfframpOrder.created_at.desc())
+        )).scalars().all()
+        for order in paj_rows:
+            existing = paj_by_intent.get(order.payment_intent_id)
+            if existing is None or paj_priority.get(order.status, 99) < paj_priority.get(existing.status, 99):
+                paj_by_intent[order.payment_intent_id] = order
+
+        fiat_rows = (await db.execute(
+            select(FiatPayment)
+            .where(FiatPayment.payment_intent_id.in_(recent_ids))
+            .order_by(FiatPayment.created_at.desc())
+        )).scalars().all()
+        for row in fiat_rows:
+            if row.flow == FiatPaymentFlow.CHECKOUT.value and row.payment_intent_id not in checkout_by_intent:
+                checkout_by_intent[row.payment_intent_id] = row
+            elif row.flow == FiatPaymentFlow.PAYOUT.value and row.payment_intent_id not in payout_by_intent:
+                payout_by_intent[row.payment_intent_id] = row
+
+    recent_activity = []
+    for intent, amount_ngn in recent_rows:
+        paj_order = paj_by_intent.get(intent.id)
+        fiat_checkout = checkout_by_intent.get(intent.id)
+        fiat_payout = payout_by_intent.get(intent.id)
+        paid_via = _resolve_paid_via(intent, paj_order, fiat_checkout)
+        settlement_status = _resolve_settlement_status(intent, paj_order, fiat_payout)
+
+        if paj_order and paj_order.token_amount:
+            token = paj_order.token_symbol
+            token_amount = paj_order.token_amount
+        else:
+            token = _token_symbol(intent.mint)
+            token_amount = _token_amount(intent.amount_atomic, token)
+
+        recent_activity.append({
+            "id": str(intent.id),
+            "title": intent.memo or intent.merchant_ref,
+            "channel": intent.source if intent.source in CHANNELS[:-1] else "web",
+            "status": intent.status,
+            "settlement_target": intent.settlement_target,
+            "paid_via": paid_via,
+            "settlement_status": settlement_status,
+            "paj_status": paj_order.status if paj_order else None,
+            "amount_ngn": _fmt(amount_ngn),
+            "token": token,
+            "token_amount": token_amount,
+            "created_at": _utc_iso(intent.created_at),
+        })
+
+    return recent_activity
 
 
 @router.get("")
@@ -176,25 +310,7 @@ async def get_dashboard(
         """), {"user_id": uid})
     vault_locked_ngn = vault_total_result.scalar_one()
 
-    recent_rows = (await db.execute(
-        select(PaymentIntent, ngn.label("amount_ngn"))
-        .where(PaymentIntent.user_id == uid)
-        .order_by(PaymentIntent.created_at.desc())
-        .limit(10)
-    )).all()
-    recent_activity = []
-    for intent, amount_ngn in recent_rows:
-        token = _token_symbol(intent.mint)
-        recent_activity.append({
-            "id": str(intent.id),
-            "title": intent.memo or intent.merchant_ref,
-            "channel": intent.source if intent.source in CHANNELS[:-1] else "web",
-            "status": intent.status,
-            "amount_ngn": _fmt(amount_ngn),
-            "token": token,
-            "token_amount": _token_amount(intent.amount_atomic, token),
-            "created_at": _utc_iso(intent.created_at),
-        })
+    recent_activity = await _load_recent_activity(db, uid, ngn)
 
     volume = _number(volume_30d)
     previous_volume = _number(volume_prev_30d)

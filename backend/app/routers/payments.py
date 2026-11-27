@@ -270,6 +270,28 @@ async def _latest_paj_offramp_for_intent(
     return min(orders, key=lambda o: _PAJ_STATUS_PRIORITY.get(o.status, 99))
 
 
+async def _mark_pending_fiat_checkout_superseded(
+    db: AsyncSession, intent_id: UUID, paid_via: str
+) -> None:
+    rows = (
+        await db.execute(
+            select(FiatPayment).where(
+                FiatPayment.payment_intent_id == intent_id,
+                FiatPayment.flow == FiatPaymentFlow.CHECKOUT.value,
+                FiatPayment.status.in_(
+                    (FiatPaymentStatus.PENDING.value, FiatPaymentStatus.PROCESSING.value)
+                ),
+            )
+        )
+    ).scalars().all()
+    for row in rows:
+        row.status = FiatPaymentStatus.EXPIRED.value
+        row.payment_outcome = f"paid_via_{paid_via}"
+        row.failure_reason = f"Settled via {paid_via}"
+        row.updated_at = utc_now()
+        db.add(row)
+
+
 async def mark_intent_funded_from_paj(
     db: AsyncSession, order: PajOfframpOrder
 ) -> PaymentIntent | None:
@@ -280,13 +302,22 @@ async def mark_intent_funded_from_paj(
         return None
     intent = await db.get(PaymentIntent, order.payment_intent_id)
     expired_candidate = intent is not None and intent.status == "failed" and intent.failure_reason == "expired"
-    if intent and (intent.status == "created" or expired_candidate):
-        intent.status = "funded"
-        intent.failure_reason = None
+    if intent and (intent.status in ("created", "funded") or expired_candidate):
+        changed = False
+        if intent.status == "created" or expired_candidate:
+            intent.status = "funded"
+            intent.failure_reason = None
+            changed = True
+        if intent.paid_via is None:
+            intent.paid_via = "paj"
+            changed = True
         if order.tx_signature and not intent.fund_signature:
             intent.fund_signature = order.tx_signature
-        intent.updated_at = utc_now()
-        db.add(intent)
+            changed = True
+        await _mark_pending_fiat_checkout_superseded(db, intent.id, "paj")
+        if changed:
+            intent.updated_at = utc_now()
+            db.add(intent)
         await db.commit()
         await db.refresh(intent)
     return intent
@@ -391,6 +422,7 @@ async def mark_intent_funded_from_fiat(
     if intent and (intent.status == "created" or expired_candidate):
         intent.status = "funded"
         intent.failure_reason = None
+        intent.paid_via = "fossapay"
         intent.updated_at = utc_now()
         db.add(intent)
         await db.commit()
@@ -398,6 +430,214 @@ async def mark_intent_funded_from_fiat(
     if intent is not None:
         await _settle_fiat_intent_payout(db, intent, payment)
     return intent
+
+
+def _paj_expected_atomic(order: PajOfframpOrder) -> str | None:
+    if not order.token_amount:
+        return None
+    try:
+        return str(
+            int(
+                (Decimal(order.token_amount) * (Decimal(10) ** order.token_decimals)).to_integral_value(
+                    rounding=ROUND_DOWN
+                )
+            )
+        )
+    except Exception:
+        return None
+
+
+async def _reconcile_intent_paj_orders(
+    db: AsyncSession, intent: PaymentIntent
+) -> list[PajOfframpOrder]:
+    orders = (
+        await db.execute(
+            select(PajOfframpOrder)
+            .where(PajOfframpOrder.payment_intent_id == intent.id)
+            .order_by(PajOfframpOrder.updated_at.desc(), PajOfframpOrder.created_at.desc())
+        )
+    ).scalars().all()
+    service = PajCashService()
+    updated_orders: list[PajOfframpOrder] = []
+    for order in orders:
+        if order.paj_order_id and order.status in (
+            PajOrderStatus.INIT.value,
+            PajOrderStatus.PROCESSING.value,
+        ):
+            try:
+                order = await service.reconcile_offramp_order(db, order)
+            except (PajCashError, ValueError) as exc:
+                logger.warning("Paj offramp reconcile failed for order %s: %s", order.id, exc)
+        if order.status in (
+            PajOrderStatus.PROCESSING.value,
+            PajOrderStatus.COMPLETED.value,
+        ):
+            await mark_intent_funded_from_paj(db, order)
+        updated_orders.append(order)
+    return updated_orders
+
+
+_ASSOCIATED_TOKEN_PROGRAM_ID = Pubkey.from_string("ATokenGPvbdGVxr1b2hvZbsiqW5xWH25efTNsLJA8knL")
+_SPL_TOKEN_PROGRAM_IDS = (
+    Pubkey.from_string("TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA"),
+    Pubkey.from_string("TokenzQdBNbLqP5VEhdkAS6EPFLC1PHnBqCXEpPxuEb"),
+)
+
+
+def _query_pubkeys_for_transfer(owner_address: str, mint: str) -> list[Pubkey]:
+    owner_pk = Pubkey.from_string(owner_address)
+    pubkeys = [owner_pk]
+    if mint != settings.SOL_MINT:
+        mint_pk = Pubkey.from_string(mint)
+        for token_prog_pk in _SPL_TOKEN_PROGRAM_IDS:
+            ata, _ = Pubkey.find_program_address(
+                [bytes(owner_pk), bytes(token_prog_pk), bytes(mint_pk)],
+                _ASSOCIATED_TOKEN_PROGRAM_ID,
+            )
+            pubkeys.append(ata)
+    return pubkeys
+
+
+async def _find_matching_onchain_transfer(
+    db: AsyncSession, intent: PaymentIntent, paj_orders: list[PajOfframpOrder]
+) -> bool:
+    if intent.status != "created" or intent.receive_mode == "private":
+        return False
+
+    targets: list[tuple[str, str, str, PajOfframpOrder | None]] = []
+    seen_targets: set[tuple[str, str, str]] = set()
+    for order in paj_orders:
+        atomic = _paj_expected_atomic(order)
+        if atomic and order.deposit_address:
+            key = (order.deposit_address, order.mint, atomic)
+            if key not in seen_targets:
+                seen_targets.add(key)
+                targets.append((order.deposit_address, order.mint, atomic, order))
+    direct_key = (intent.recipient_address, intent.mint, intent.amount_atomic)
+    if direct_key not in seen_targets:
+        targets.append((intent.recipient_address, intent.mint, intent.amount_atomic, None))
+
+    expected_memo = f"veil:{intent.id}"
+    seen_sigs: set[str] = set()
+    try:
+        async with AsyncClient(settings.SOLANA_RPC_URL) as client:
+            for address, mint, atomic, matched_order in targets:
+                try:
+                    pubkeys = _query_pubkeys_for_transfer(address, mint)
+                except Exception as exc:
+                    logger.warning("Failed to derive transfer lookup addresses for %s: %s", address, exc)
+                    continue
+                entries = []
+                for pubkey in pubkeys:
+                    try:
+                        sig_resp = await client.get_signatures_for_address(pubkey, limit=10)
+                        entries.extend(sig_resp.value or [])
+                    except Exception as exc:
+                        logger.warning("Failed to list signatures for %s: %s", pubkey, exc)
+                for entry in entries:
+                    if getattr(entry, "err", None) is not None:
+                        continue
+                    sig_str = str(entry.signature)
+                    if sig_str in seen_sigs:
+                        continue
+                    seen_sigs.add(sig_str)
+                    duplicate = await db.execute(
+                        select(PaymentIntent.id).where(PaymentIntent.fund_signature == sig_str)
+                    )
+                    if duplicate.first():
+                        continue
+                    if await verify_transfer(
+                        sig_str,
+                        mint,
+                        address,
+                        atomic,
+                        intent.created_at,
+                        expected_memo=expected_memo,
+                        before=intent.expires_at,
+                    ):
+                        paid_via = (
+                            "paj"
+                            if matched_order is not None
+                            or intent.settlement_target == SettlementTarget.FIAT.value
+                            else "crypto"
+                        )
+                        intent.status = "funded"
+                        intent.failure_reason = None
+                        intent.fund_signature = sig_str
+                        intent.paid_via = paid_via
+                        intent.updated_at = utc_now()
+                        db.add(intent)
+                        if matched_order is not None:
+                            matched_order.tx_signature = sig_str
+                            if matched_order.status == PajOrderStatus.INIT.value:
+                                matched_order.status = PajOrderStatus.PROCESSING.value
+                            matched_order.updated_at = utc_now()
+                            db.add(matched_order)
+                        await _mark_pending_fiat_checkout_superseded(db, intent.id, paid_via)
+                        await db.commit()
+                        await db.refresh(intent)
+                        return True
+    except Exception as exc:
+        logger.warning("On-chain reconciliation failed for intent %s: %s", intent.id, exc)
+    return False
+
+
+async def _reconcile_intent_all_rails(
+    db: AsyncSession, intent: PaymentIntent
+) -> tuple[
+    PaymentIntent,
+    FiatPayment | None,
+    PajOfframpOrder | None,
+    FiatPayment | None,
+    MerchantBankAccount | None,
+]:
+    paj_orders = await _reconcile_intent_paj_orders(db, intent)
+    refreshed = await db.get(PaymentIntent, intent.id)
+    if refreshed is not None:
+        intent = refreshed
+
+    if intent.status == "created" and intent.receive_mode != "private":
+        await _find_matching_onchain_transfer(db, intent, paj_orders)
+        refreshed = await db.get(PaymentIntent, intent.id)
+        if refreshed is not None:
+            intent = refreshed
+
+    fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+    if fiat_checkout is not None and fiat_checkout.status in (
+        FiatPaymentStatus.PENDING.value,
+        FiatPaymentStatus.PROCESSING.value,
+    ):
+        if intent.status in ("funded", "claimed") and intent.paid_via in ("paj", "crypto"):
+            await _mark_pending_fiat_checkout_superseded(db, intent.id, intent.paid_via)
+            await db.commit()
+            await db.refresh(fiat_checkout)
+        elif intent.status == "created":
+            try:
+                fiat_checkout = await FossaPayService().reconcile_checkout(db, fiat_checkout)
+                await mark_intent_funded_from_fiat(db, fiat_checkout)
+                refreshed = await db.get(PaymentIntent, intent.id)
+                if refreshed is not None:
+                    intent = refreshed
+            except FossaPayError as exc:
+                logger.warning("FossaPay checkout reconcile failed for intent %s: %s", intent.id, exc)
+
+    fiat_payout = await _latest_payout_for_intent(db, intent.id)
+    if fiat_payout is not None and fiat_payout.status in (
+        FiatPaymentStatus.PENDING.value,
+        FiatPaymentStatus.PROCESSING.value,
+    ):
+        try:
+            fiat_payout = await FossaPayService().reconcile_payout(db, fiat_payout)
+        except FossaPayError as exc:
+            logger.warning("FossaPay payout reconcile failed for intent %s: %s", intent.id, exc)
+
+    paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
+    bank_account = (
+        await db.get(MerchantBankAccount, intent.bank_account_id)
+        if intent.bank_account_id
+        else None
+    )
+    return intent, fiat_checkout, paj_offramp, fiat_payout, bank_account
 
 def format_intent(
     intent: PaymentIntent,
@@ -420,6 +660,7 @@ def format_intent(
         "receiveMode": intent.receive_mode,
         "allowFiatCheckout": intent.allow_fiat_checkout,
         "settlementTarget": intent.settlement_target,
+        "paidVia": intent.paid_via,
         "memo": intent.memo,
         "status": intent.status,
         "createdAt": intent.created_at.isoformat() + "Z",
@@ -981,6 +1222,52 @@ async def create_intent_fiat_checkout(
     return format_fiat_payment(fiat_checkout, is_owner=is_owner)
 
 
+@router.post("/intents/{intent_id}/reconcile")
+async def reconcile_intent(
+    intent_id: str,
+    current_user: Optional[User] = Depends(get_optional_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(intent_id)
+    intent = await db.get(PaymentIntent, uuid_id)
+    if not intent:
+        raise HTTPException(status_code=404, detail="intent_not_found")
+
+    intent, fiat_checkout, paj_offramp, fiat_payout, bank_account = (
+        await _reconcile_intent_all_rails(db, intent)
+    )
+    is_owner = current_user is not None and intent.user_id == current_user.id
+    return format_intent(
+        intent,
+        is_owner=is_owner,
+        fiat_checkout=fiat_checkout,
+        paj_offramp=paj_offramp,
+        bank_account=bank_account,
+        fiat_payout=fiat_payout,
+    )
+
+
+async def _sync_fiat_checkout_against_intent(
+    db: AsyncSession, intent: PaymentIntent, fiat_checkout: FiatPayment
+) -> bool:
+    """Reconcile Paj/on-chain rails for an intent and supersede unused FossaPay checkouts."""
+    paj_orders = await _reconcile_intent_paj_orders(db, intent)
+    refreshed = await db.get(PaymentIntent, intent.id)
+    if refreshed is not None:
+        intent = refreshed
+    if intent.status == "created" and intent.receive_mode != "private":
+        await _find_matching_onchain_transfer(db, intent, paj_orders)
+        refreshed = await db.get(PaymentIntent, intent.id)
+        if refreshed is not None:
+            intent = refreshed
+    if intent.status in ("funded", "claimed") and intent.paid_via in ("paj", "crypto"):
+        await _mark_pending_fiat_checkout_superseded(db, intent.id, intent.paid_via)
+        await db.commit()
+        await db.refresh(fiat_checkout)
+        return True
+    return False
+
+
 @router.post("/intents/{intent_id}/fiat-checkout/reconcile")
 async def reconcile_intent_fiat_checkout(
     intent_id: str,
@@ -998,13 +1285,16 @@ async def reconcile_intent_fiat_checkout(
     if not fiat_checkout:
         raise HTTPException(status_code=404, detail="No bank transfer checkout exists for this payment.")
 
+    is_owner = current_user is not None and intent.user_id == current_user.id
+    if await _sync_fiat_checkout_against_intent(db, intent, fiat_checkout):
+        return format_fiat_payment(fiat_checkout, is_owner=is_owner)
+
     try:
         updated = await FossaPayService().reconcile_checkout(db, fiat_checkout)
     except FossaPayError as exc:
         _raise_fossapay_http_error(exc)
 
     await mark_intent_funded_from_fiat(db, updated)
-    is_owner = current_user is not None and intent.user_id == current_user.id
     return format_fiat_payment(updated, is_owner=is_owner)
 
 @router.post("/intents/{intent_id}/confirm-fund")
@@ -1088,15 +1378,20 @@ async def confirm_fund(
             await db.commit()
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
+    paid_via = "paj" if (offramp_order is not None or intent.settlement_target == SettlementTarget.FIAT.value) else "crypto"
     if offramp_order is not None:
         offramp_order.tx_signature = req.signature
+        if offramp_order.status == PajOrderStatus.INIT.value:
+            offramp_order.status = PajOrderStatus.PROCESSING.value
         offramp_order.updated_at = utc_now()
         db.add(offramp_order)
 
     intent.status = "funded"
     intent.failure_reason = None
     intent.fund_signature = req.signature
+    intent.paid_via = paid_via
     intent.updated_at = utc_now()
+    await _mark_pending_fiat_checkout_superseded(db, intent.id, paid_via)
 
     db.add(intent)
     try:
@@ -1105,7 +1400,19 @@ async def confirm_fund(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Signature already used") from exc
     await db.refresh(intent)
-    return format_intent(intent, is_owner=False, paj_offramp=offramp_order)
+    fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+    bank_account = (
+        await db.get(MerchantBankAccount, intent.bank_account_id)
+        if intent.bank_account_id
+        else None
+    )
+    return format_intent(
+        intent,
+        is_owner=False,
+        fiat_checkout=fiat_checkout,
+        paj_offramp=offramp_order,
+        bank_account=bank_account,
+    )
 
 @router.post("/intents/{intent_id}/confirm-claim")
 async def confirm_claim(
@@ -1159,6 +1466,7 @@ async def confirm_claim(
 
     intent.status = "claimed"
     intent.claim_signature = req.signature
+    intent.paid_via = intent.paid_via or "crypto"
     intent.updated_at = utc_now()
 
     db.add(intent)
@@ -1315,6 +1623,13 @@ async def reconcile_fiat_payment(
     service = FossaPayService()
     try:
         if payment.flow == FiatPaymentFlow.CHECKOUT.value:
+            if payment.payment_intent_id is not None:
+                linked_intent = await db.get(PaymentIntent, payment.payment_intent_id)
+                if linked_intent is not None and await _sync_fiat_checkout_against_intent(
+                    db, linked_intent, payment
+                ):
+                    return format_fiat_payment(payment, is_owner=True)
+
             updated = await service.reconcile_checkout(db, payment)
             await mark_intent_funded_from_fiat(db, updated)
         else:

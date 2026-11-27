@@ -246,6 +246,9 @@ export function PayoutsPanel() {
     try {
       const updated = await reconcileFiatPayment(payment.id)
       setHistory((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      if (updated.paymentOutcome?.startsWith('paid_via_')) {
+        void loadPajOrders()
+      }
     } catch (err) {
       setHistoryError(err instanceof Error ? err.message : 'Could not refresh payment status.')
     } finally {
@@ -259,6 +262,7 @@ export function PayoutsPanel() {
     try {
       const updated = await reconcilePajOfframp(order.id)
       setPajOrders((prev) => prev.map((item) => (item.id === updated.id ? updated : item)))
+      void loadHistory()
     } catch (err) {
       setPajError(err instanceof Error ? err.message : 'Could not reconcile Paj offramp status.')
     } finally {
