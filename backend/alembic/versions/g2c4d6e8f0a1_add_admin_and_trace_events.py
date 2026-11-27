@@ -22,10 +22,7 @@ SEED_ADMIN_ADDRESS = "6sVpTNzecJcdenKmmr34BPUEBpYqSSe3QHKut4iiXvKY"
 
 
 def upgrade() -> None:
-    op.add_column(
-        "user",
-        sa.Column("is_admin", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-    )
+    op.execute('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE')
 
     op.create_table(
         "payment_trace_events",
@@ -61,16 +58,17 @@ def upgrade() -> None:
         sa.Column("details_json", sa.Text(), nullable=True),
         sa.Column("actor_address", sa.String(), nullable=True),
         sa.Column("created_at", sa.DateTime(), nullable=False),
+        if_not_exists=True,
     )
-    op.create_index("ix_payment_trace_events_payment_intent_id", "payment_trace_events", ["payment_intent_id"])
-    op.create_index("ix_payment_trace_events_fiat_payment_id", "payment_trace_events", ["fiat_payment_id"])
-    op.create_index("ix_payment_trace_events_paj_order_id", "payment_trace_events", ["paj_order_id"])
-    op.create_index("ix_payment_trace_events_payroll_group_id", "payment_trace_events", ["payroll_group_id"])
-    op.create_index("ix_payment_trace_events_source", "payment_trace_events", ["source"])
-    op.create_index("ix_payment_trace_events_event_type", "payment_trace_events", ["event_type"])
-    op.create_index("ix_payment_trace_events_status", "payment_trace_events", ["status"])
-    op.create_index("ix_payment_trace_events_actor_address", "payment_trace_events", ["actor_address"])
-    op.create_index("ix_payment_trace_events_created_at", "payment_trace_events", ["created_at"])
+    op.create_index("ix_payment_trace_events_payment_intent_id", "payment_trace_events", ["payment_intent_id"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_fiat_payment_id", "payment_trace_events", ["fiat_payment_id"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_paj_order_id", "payment_trace_events", ["paj_order_id"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_payroll_group_id", "payment_trace_events", ["payroll_group_id"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_source", "payment_trace_events", ["source"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_event_type", "payment_trace_events", ["event_type"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_status", "payment_trace_events", ["status"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_actor_address", "payment_trace_events", ["actor_address"], if_not_exists=True)
+    op.create_index("ix_payment_trace_events_created_at", "payment_trace_events", ["created_at"], if_not_exists=True)
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
     op.execute(
