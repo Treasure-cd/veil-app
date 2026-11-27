@@ -18,12 +18,15 @@ import { Money } from '../components/ui/Money'
 import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
 import { BankTransferCard } from '../components/payments/BankTransferCard'
 import { PayoutsPanel } from '../components/payments/PayoutsPanel'
-import { reconcileFiatPayment, type FeeBearer, type FiatPayment } from '../services/fiat'
+import { type FeeBearer, type FiatPayment } from '../services/fiat'
 import { registerUmbraRecipient } from '../lib/umbra'
 import {
   getPajRates,
   listMerchantBankAccounts,
+  reconcileIntent,
   type MerchantBankAccount,
+  type PaidViaRail,
+  type PajOfframpOrder,
 } from '../services/paj'
 
 interface PaymentIntent {
@@ -33,8 +36,58 @@ interface PaymentIntent {
   recipientAddress: string
   receiveMode: 'public' | 'private'
   settlementTarget?: 'crypto' | 'fiat'
+  paidVia?: PaidViaRail | null
+  status?: 'created' | 'funded' | 'claimed' | 'failed'
   fiatCheckout?: FiatPayment | null
+  pajOfframp?: PajOfframpOrder | null
+  fiatPayout?: FiatPayment | { status: string; bankName?: string | null } | null
   bankAccount?: MerchantBankAccount | null
+}
+
+function getGeneratedStatusBadge(payment: {
+  status: 'created' | 'funded' | 'claimed' | 'failed'
+  paidVia: PaidViaRail | null
+  settlementTarget: 'crypto' | 'fiat'
+  receiveMode: 'public' | 'private'
+  pajOfframp: PajOfframpOrder | null
+  fiatPayout: FiatPayment | { status: string; bankName?: string | null } | null
+}): { label: string; className: string } {
+  const settledStyle = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
+  const processingStyle = 'bg-primary/10 text-primary'
+  const pendingStyle = 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300'
+  const failedStyle = 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300'
+
+  if (payment.pajOfframp?.status === 'COMPLETED' || payment.fiatPayout?.status === 'completed') {
+    return { label: 'Settled (NGN)', className: settledStyle }
+  }
+  if (payment.pajOfframp?.status === 'PROCESSING') {
+    return { label: 'Processing Paj offramp', className: processingStyle }
+  }
+  if (payment.pajOfframp?.status === 'ERROR' || payment.fiatPayout?.status === 'failed') {
+    return { label: 'Settlement error', className: failedStyle }
+  }
+  if (payment.settlementTarget === 'fiat' && (payment.status === 'funded' || payment.status === 'claimed')) {
+    if (payment.paidVia === 'fossapay') {
+      return { label: 'Sending NGN payout', className: processingStyle }
+    }
+    return {
+      label: payment.paidVia === 'paj' ? 'Paid via Paj · Settling' : 'Paid · Settling',
+      className: processingStyle,
+    }
+  }
+  if (payment.status === 'claimed' || (payment.status === 'funded' && payment.receiveMode === 'public')) {
+    return { label: 'Settled', className: settledStyle }
+  }
+  if (payment.status === 'funded' && payment.receiveMode === 'private') {
+    return { label: 'Awaiting claim', className: pendingStyle }
+  }
+  if (payment.status === 'failed') {
+    return { label: 'Failed', className: failedStyle }
+  }
+  return {
+    label: payment.settlementTarget === 'fiat' ? 'Any Solana token → NGN' : 'Awaiting payment',
+    className: payment.settlementTarget === 'fiat' ? settledStyle : pendingStyle,
+  }
 }
 
 interface Rates {
@@ -70,9 +123,14 @@ export default function Payments() {
   const [error, setError] = useState<string | null>(null)
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
   const [generatedPayment, setGeneratedPayment] = useState<{
+    id: string
     amountNgn: string
     tokenAmount: string
+    status: 'created' | 'funded' | 'claimed' | 'failed'
+    paidVia: PaidViaRail | null
     fiatCheckout: FiatPayment | null
+    pajOfframp: PajOfframpOrder | null
+    fiatPayout: FiatPayment | { status: string; bankName?: string | null } | null
     settlementTarget: 'crypto' | 'fiat'
     recipientAddress: string
     receiveMode: 'public' | 'private'
@@ -235,9 +293,14 @@ export default function Payments() {
       })
       if (!intent.id) throw new Error('The payment request was created without an ID.')
       setGeneratedPayment({
+        id: intent.id,
         amountNgn: intent.amount_ngn,
         tokenAmount: (Number(intent.amountAtomic) / 1e6).toString(),
+        status: intent.status ?? 'created',
+        paidVia: intent.paidVia ?? null,
         fiatCheckout: intent.fiatCheckout ?? null,
+        pajOfframp: intent.pajOfframp ?? null,
+        fiatPayout: intent.fiatPayout ?? null,
         settlementTarget: intent.settlementTarget ?? settlementTarget,
         recipientAddress: intent.recipientAddress,
         receiveMode: intent.receiveMode ?? (settlementTarget === 'crypto' ? receiveMode : 'public'),
@@ -261,15 +324,26 @@ export default function Payments() {
     }
   }
 
-  async function refreshGeneratedFiatCheckout() {
-    if (!generatedPayment?.fiatCheckout) return
+  async function reconcileGeneratedIntent() {
+    if (!generatedPayment) return
     setCheckingFiat(true)
     setError(null)
     try {
-      const updated = await reconcileFiatPayment(generatedPayment.fiatCheckout.id)
-      setGeneratedPayment((prev) => (prev ? { ...prev, fiatCheckout: updated } : prev))
+      const updated = await reconcileIntent(generatedPayment.id)
+      setGeneratedPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: updated.status,
+              paidVia: updated.paidVia,
+              fiatCheckout: updated.fiatCheckout,
+              pajOfframp: updated.pajOfframp,
+              fiatPayout: updated.fiatPayout ?? null,
+            }
+          : prev,
+      )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Could not refresh bank transfer status.')
+      setError(err instanceof Error ? err.message : 'Could not reconcile payment status.')
     } finally {
       setCheckingFiat(false)
     }
@@ -402,8 +476,8 @@ export default function Payments() {
               <div className="mx-auto mt-6 max-w-lg rounded-card border border-primary/15 bg-background p-4 text-left">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-sm font-semibold text-primary">Auto-offramp to Nigerian bank (Paj Cash)</p>
-                  <span className="rounded-pill bg-emerald-100 px-2.5 py-0.5 text-xs font-medium text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300">
-                    Any Solana token → NGN
+                  <span className={`rounded-pill px-2.5 py-0.5 text-xs font-medium ${getGeneratedStatusBadge(generatedPayment).className}`}>
+                    {getGeneratedStatusBadge(generatedPayment).label}
                   </span>
                 </div>
                 {generatedPayment.bankAccount && (
@@ -431,6 +505,39 @@ export default function Payments() {
                     {copiedDeposit ? 'Copied' : 'Copy'}
                   </Button>
                 </div>
+                {!generatedPayment.fiatCheckout && (
+                  <div className="mt-3 flex items-center justify-between gap-3">
+                    <span className="text-xs text-foreground/60">
+                      {generatedPayment.paidVia === 'paj' && generatedPayment.pajOfframp?.tokenAmount
+                        ? `Paid ${generatedPayment.pajOfframp.tokenAmount} ${generatedPayment.pajOfframp.tokenSymbol} via Paj`
+                        : 'Check crypto or Paj offramp settlement'}
+                    </span>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      disabled={checkingFiat}
+                      onClick={() => void reconcileGeneratedIntent()}
+                    >
+                      {checkingFiat ? 'Checking...' : 'Reconcile payment status'}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {generatedPayment && generatedPayment.settlementTarget !== 'fiat' && !generatedPayment.fiatCheckout && (
+              <div className="mx-auto mt-6 flex max-w-lg flex-wrap items-center justify-between gap-3 rounded-card border border-primary/15 bg-background px-4 py-3 text-left">
+                <span className={`rounded-pill px-2.5 py-0.5 text-xs font-medium ${getGeneratedStatusBadge(generatedPayment).className}`}>
+                  {getGeneratedStatusBadge(generatedPayment).label}
+                </span>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  disabled={checkingFiat}
+                  onClick={() => void reconcileGeneratedIntent()}
+                >
+                  {checkingFiat ? 'Checking...' : 'Reconcile payment status'}
+                </Button>
               </div>
             )}
 
@@ -441,7 +548,7 @@ export default function Payments() {
                   compact
                   checkingStatus={checkingFiat}
                   reconcileLabel="Reconcile payment status"
-                  onCheckStatus={() => void refreshGeneratedFiatCheckout()}
+                  onCheckStatus={() => void reconcileGeneratedIntent()}
                 />
               </div>
             )}

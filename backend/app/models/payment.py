@@ -83,6 +83,7 @@ class PaymentIntent(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now)
     fund_signature: Optional[str] = Field(default=None, index=True, unique=True)
     claim_signature: Optional[str] = Field(default=None)
+    paid_via: Optional[str] = Field(default=None)
     source: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
 

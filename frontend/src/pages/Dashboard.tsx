@@ -1,10 +1,13 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useState, type ReactNode } from 'react'
 import { useNavigate } from 'react-router'
 import { ArrowDownLeft, ArrowUpRight, Lightning, LockKey, PaperPlaneRight } from '@phosphor-icons/react'
 import { api } from '../services/api'
+import { reconcileIntent, type PaidViaRail } from '../services/paj'
 import { Button } from '../components/ui/Button'
 import { Money } from '../components/ui/Money'
 import { formatNgn } from '../lib/money'
+
+type SettlementStatus = 'settled' | 'settling' | 'awaiting_claim' | 'pending' | 'expired' | 'failed'
 
 interface DashboardData {
   volume_30d_ngn: string
@@ -23,11 +26,53 @@ interface DashboardData {
     title: string
     channel: string
     status: string
+    settlement_target: 'crypto' | 'fiat'
+    paid_via: PaidViaRail | null
+    settlement_status: SettlementStatus
+    paj_status: string | null
     amount_ngn: string
     token: string
     token_amount: string
     created_at: string
   }[]
+}
+
+const PAID_VIA_LABELS: Record<PaidViaRail, string> = {
+  paj: 'via Paj',
+  fossapay: 'via FossaPay',
+  crypto: 'via Solana',
+}
+
+function getActivityStatusPresentation(
+  status: SettlementStatus,
+  settlementTarget: 'crypto' | 'fiat',
+): { label: string; className: string } {
+  switch (status) {
+    case 'settled':
+      return {
+        label: settlementTarget === 'fiat' ? 'Settled · NGN' : 'Settled',
+        className: 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300',
+      }
+    case 'settling':
+      return { label: 'Settling to bank', className: 'bg-primary/10 text-primary' }
+    case 'awaiting_claim':
+      return {
+        label: 'Awaiting claim',
+        className: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+      }
+    case 'pending':
+      return {
+        label: 'Pending',
+        className: 'bg-amber-100 text-amber-800 dark:bg-amber-500/15 dark:text-amber-300',
+      }
+    case 'expired':
+      return { label: 'Expired', className: 'bg-foreground/10 text-foreground/70' }
+    case 'failed':
+      return {
+        label: 'Failed',
+        className: 'bg-red-100 text-red-700 dark:bg-red-500/15 dark:text-red-300',
+      }
+  }
 }
 
 const CHANNELS = [
@@ -118,15 +163,37 @@ export default function Dashboard() {
   const [data, setData] = useState<DashboardData | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [reconcilingId, setReconcilingId] = useState<string | null>(null)
+  const [reconcileError, setReconcileError] = useState<string | null>(null)
+
+  const loadDashboard = useCallback(async () => {
+    try {
+      const result = await api<DashboardData>('/v1/dashboard')
+      setData(result)
+      setError(null)
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : 'Could not load dashboard data.')
+    } finally {
+      setLoading(false)
+    }
+  }, [])
 
   useEffect(() => {
-    let active = true
-    void api<DashboardData>('/v1/dashboard')
-      .then((result) => { if (active) setData(result) })
-      .catch((err: unknown) => { if (active) setError(err instanceof Error ? err.message : 'Could not load dashboard data.') })
-      .finally(() => { if (active) setLoading(false) })
-    return () => { active = false }
-  }, [])
+    void loadDashboard()
+  }, [loadDashboard])
+
+  async function handleReconcileActivity(intentId: string) {
+    setReconcilingId(intentId)
+    setReconcileError(null)
+    try {
+      await reconcileIntent(intentId)
+      await loadDashboard()
+    } catch (err: unknown) {
+      setReconcileError(err instanceof Error ? err.message : 'Could not reconcile payment status.')
+    } finally {
+      setReconcilingId(null)
+    }
+  }
 
   if (loading) return <DashboardSkeleton />
   if (!data) {
@@ -238,17 +305,50 @@ export default function Dashboard() {
                 <div><h2 className="font-semibold text-primary">Recent activity</h2><p className="mt-0.5 text-xs text-foreground/45">Latest payment requests</p></div>
                 <button type="button" onClick={() => navigate('/payments')} className="text-xs font-semibold text-primary hover:underline">Payments</button>
               </div>
+              {reconcileError && (
+                <p role="alert" className="border-b border-primary/5 bg-red-50 px-5 py-2.5 text-xs text-red-700 dark:bg-red-500/10 dark:text-red-300">
+                  {reconcileError}
+                </p>
+              )}
               {data.recent_activity.length === 0 ? <p className="px-5 py-9 text-center text-sm text-foreground/45">No recent activity yet.</p> : (
                 <ul className="divide-y divide-primary/5">
-                  {data.recent_activity.map((item) => (
-                    <li key={item.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
-                      <div className="min-w-0">
-                        <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
-                        <p className="mt-1 text-xs capitalize text-foreground/45">{item.channel} · {item.status} · {relativeTime(item.created_at)}</p>
-                      </div>
-                      <Money amountNgn={item.amount_ngn} tokenAmount={item.token_amount} token={item.token} align="right" primaryClassName="text-sm font-semibold text-primary" />
-                    </li>
-                  ))}
+                  {data.recent_activity.map((item) => {
+                    const badge = getActivityStatusPresentation(item.settlement_status, item.settlement_target)
+                    const railLabel = item.paid_via ? PAID_VIA_LABELS[item.paid_via] : null
+                    const canReconcile =
+                      item.settlement_status === 'pending' ||
+                      item.settlement_status === 'settling' ||
+                      item.settlement_status === 'awaiting_claim'
+                    return (
+                      <li key={item.id} className="flex items-center justify-between gap-4 px-5 py-3.5">
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="truncate text-sm font-medium text-foreground">{item.title}</p>
+                            <span className={`inline-flex rounded-pill px-2 py-0.5 text-[11px] font-medium ${badge.className}`}>
+                              {badge.label}
+                            </span>
+                          </div>
+                          <p className="mt-1 text-xs text-foreground/45">
+                            <span className="capitalize">{item.channel}</span>
+                            {railLabel ? ` · ${railLabel}` : ''} · {relativeTime(item.created_at)}
+                          </p>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-3">
+                          {canReconcile && (
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              disabled={reconcilingId === item.id}
+                              onClick={() => void handleReconcileActivity(item.id)}
+                            >
+                              {reconcilingId === item.id ? 'Checking...' : 'Reconcile'}
+                            </Button>
+                          )}
+                          <Money amountNgn={item.amount_ngn} tokenAmount={item.token_amount} token={item.token} align="right" primaryClassName="text-sm font-semibold text-primary" />
+                        </div>
+                      </li>
+                    )
+                  })}
                 </ul>
               )}
             </section>
