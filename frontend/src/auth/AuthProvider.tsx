@@ -9,7 +9,7 @@ import {
 } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { configureApi, ApiError } from '../services/api'
-import { buildLoginMessage, encodeSignature, fetchMe, login, requestChallenge } from './auth.api'
+import { buildLoginMessage, encodeSignature, fetchMe, login, loginEmail, registerEmail, requestChallenge } from './auth.api'
 import { clearSession, getTokenExpiry, loadSession, saveSession } from './auth.storage'
 import type { Session, SignInStep } from './auth.types'
 import { AuthContext, type AuthContextValue } from './useAuth.ts'
@@ -23,6 +23,11 @@ function toMessage(e: unknown): string {
     return e.message
   }
   return 'Something went wrong. Please try again.'
+}
+
+/** Returns true if the user logged in via email (placeholder address). */
+function isEmailUser(session: Session | null): boolean {
+  return Boolean(session?.user.address?.startsWith('email:'))
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -93,8 +98,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On reload, there may be no public key until the wallet adapter restores its connection.
   // Keep the persisted session during that gap, but clear it if an active wallet disconnects
   // or changes to an address that does not own this session.
+  // For email users, skip wallet-binding logic entirely.
   useEffect(() => {
-    if (connecting) return
+    if (connecting || isEmailUser(session)) return
 
     const address = publicKey?.toBase58() ?? null
     if (address) lastConnectedAddressRef.current = address
@@ -137,6 +143,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [publicKey, signMessage, applySession])
 
+  const signInWithEmail = useCallback(async (email: string, password: string, isRegister: boolean) => {
+    setError(null)
+    try {
+      setStep('verifying')
+      const res = isRegister
+        ? await registerEmail(email, password)
+        : await loginEmail(email, password)
+      applySession({ token: res.token, user: res.user })
+      setAuthModalOpen(false)
+    } catch (e) {
+      setError(toMessage(e))
+    } finally {
+      setStep('idle')
+    }
+  }, [applySession])
+
   const signOut = useCallback(() => applySession(null), [applySession])
   const disconnectWallet = useCallback(async () => {
     applySession(null)
@@ -160,13 +182,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       error,
       authModalOpen,
       signIn,
+      signInWithEmail,
       signOut,
       disconnectWallet,
       openAuthModal,
       closeAuthModal,
       clearError,
     }),
-    [session, step, error, authModalOpen, signIn, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
+    [session, step, error, authModalOpen, signIn, signInWithEmail, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

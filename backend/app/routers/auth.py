@@ -1,10 +1,11 @@
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel
+from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 from uuid import uuid4
 from datetime import datetime, timedelta, timezone
 import base58
+import bcrypt
 import nacl.signing
 import jwt
 from core.session import get_session
@@ -19,10 +20,19 @@ router = APIRouter(
 )
 
 
+def _hash_password(password: str) -> str:
+    return bcrypt.hashpw(password.encode("utf-8"), bcrypt.gensalt()).decode("utf-8")
+
+
+def _verify_password(password: str, hashed: str) -> bool:
+    return bcrypt.checkpw(password.encode("utf-8"), hashed.encode("utf-8"))
+
+
 def serialize_auth_user(user: User) -> dict:
     return {
         "id": str(user.id),
         "address": user.address,
+        "email": user.email,
         "isAdmin": bool(user.is_admin),
         "createdAt": user.created_at.isoformat() + "Z",
         "updatedAt": user.updated_at.isoformat() + "Z",
@@ -38,6 +48,14 @@ class LoginRequest(BaseModel):
     address: str
     signature: str
     message: str
+
+class RegisterEmailRequest(BaseModel):
+    email: EmailStr
+    password: str
+
+class LoginEmailRequest(BaseModel):
+    email: EmailStr
+    password: str
 
 def verify_solana_signature(public_key_b58: str, signature_b58: str, message: str) -> bool:
     try:
@@ -154,3 +172,72 @@ async def get_authenticated_user(
 ):
     synced = await ensure_seed_admin(db, current_user)
     return serialize_auth_user(synced)
+
+
+@router.post("/register")
+async def register_email(
+    req: RegisterEmailRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    email_lower = req.email.lower().strip()
+    if len(req.password) < 8:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 8 characters.",
+        )
+
+    existing = (await db.execute(select(User).where(User.email == email_lower))).scalars().first()
+    if existing:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in.",
+        )
+
+    # Email users get a placeholder address (not a real Solana pubkey).
+    placeholder_address = f"email:{uuid4().hex}"
+    user = User(
+        address=placeholder_address,
+        email=email_lower,
+        password_hash=_hash_password(req.password),
+    )
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    token = create_jwt_token(str(user.id), user.address)
+    return {
+        "token": token,
+        "user": serialize_auth_user(user),
+    }
+
+
+@router.post("/login-email")
+async def login_email(
+    req: LoginEmailRequest,
+    db: AsyncSession = Depends(get_session),
+):
+    email_lower = req.email.lower().strip()
+    user = (await db.execute(select(User).where(User.email == email_lower))).scalars().first()
+
+    if not user or not user.password_hash:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    if not _verify_password(req.password, user.password_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password.",
+        )
+
+    user.updated_at = utc_now()
+    db.add(user)
+    await db.commit()
+    await db.refresh(user)
+
+    token = create_jwt_token(str(user.id), user.address)
+    return {
+        "token": token,
+        "user": serialize_auth_user(user),
+    }
