@@ -56,6 +56,9 @@ async def _ensure_postgres_schema() -> None:
             text("ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS paid_via VARCHAR")
         )
         await conn.execute(
+            text("ALTER TABLE payroll_groups ADD COLUMN IF NOT EXISTS payout_signatures_json TEXT")
+        )
+        await conn.execute(
             text("ALTER TABLE whatsapp_messages ADD COLUMN IF NOT EXISTS reply_text TEXT")
         )
         await conn.execute(

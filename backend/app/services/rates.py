@@ -20,20 +20,23 @@ async def get_rates() -> dict:
         async with httpx.AsyncClient(timeout=5) as client:
             response = await client.get(
                 "https://api.coingecko.com/api/v3/simple/price",
-                params={"ids": "solana,usd-coin", "vs_currencies": "ngn"},
+                params={"ids": "solana,usd-coin,tether", "vs_currencies": "ngn"},
             )
             response.raise_for_status()
             data = response.json()
             sol = Decimal(str(data["solana"]["ngn"]))
             usdc = Decimal(str(data["usd-coin"]["ngn"]))
-            if sol <= 0 or usdc <= 0:
+            usdt = Decimal(str(data["tether"]["ngn"]))
+            if sol <= 0 or usdc <= 0 or usdt <= 0:
                 raise ValueError("CoinGecko returned a non-positive rate")
-        rates = {"sol": sol, "usdc": usdc}
+        rates = {"sol": sol, "usdc": usdc, "usdt": usdt}
     except Exception:
-        sol, usdc = settings.RATE_NGN_PER_SOL, settings.RATE_NGN_PER_USDC
-        if not sol or not usdc:
+        sol = settings.RATE_NGN_PER_SOL
+        usdc = settings.RATE_NGN_PER_USDC
+        usdt = settings.RATE_NGN_PER_USDT or usdc
+        if not sol or not usdc or not usdt:
             raise HTTPException(status_code=503, detail="NGN rates are unavailable")
-        rates = {"sol": Decimal(str(sol)), "usdc": Decimal(str(usdc))}
+        rates = {"sol": Decimal(str(sol)), "usdc": Decimal(str(usdc)), "usdt": Decimal(str(usdt))}
     _cache = {**rates, "asOf": datetime.now(timezone.utc)}
     _cached_at = time.monotonic()
     return _cache

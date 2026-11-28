@@ -9,6 +9,7 @@ dotenv.load_dotenv()
 MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
 DEVNET_RPC_URL = "https://api.devnet.solana.com"
 MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+MAINNET_USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112"
 
@@ -28,6 +29,7 @@ class Settings(BaseSettings):
     SOLANA_NETWORK: str = Field(default="mainnet-beta")
     SOLANA_RPC_URL: str = Field(default="")
     USDC_MINT: str = Field(default="")
+    USDT_MINT: str = Field(default="", validation_alias=AliasChoices("USDT_MINT", "SOLANA_USDT_MINT"))
     SOL_MINT: str = Field(default=NATIVE_SOL_MINT)
 
     @model_validator(mode="after")
@@ -39,6 +41,8 @@ class Settings(BaseSettings):
                 self.SOLANA_RPC_URL = MAINNET_RPC_URL
             if not (self.USDC_MINT or "").strip():
                 self.USDC_MINT = MAINNET_USDC_MINT
+            if not (self.USDT_MINT or "").strip():
+                self.USDT_MINT = MAINNET_USDT_MINT
         elif raw == "devnet":
             self.SOLANA_NETWORK = "devnet"
             if not (self.SOLANA_RPC_URL or "").strip():
@@ -58,8 +62,13 @@ class Settings(BaseSettings):
     @property
     def known_usdc_mints(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys((self.USDC_MINT, MAINNET_USDC_MINT, DEVNET_USDC_MINT)))
+
+    @property
+    def known_usdt_mints(self) -> tuple[str, ...]:
+        return (self.USDT_MINT,) if self.USDT_MINT else ()
     RATE_NGN_PER_SOL: float | None = Field(default=None)
     RATE_NGN_PER_USDC: float | None = Field(default=None)
+    RATE_NGN_PER_USDT: float | None = Field(default=None)
     
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173")
     

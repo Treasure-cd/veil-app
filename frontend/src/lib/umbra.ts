@@ -12,11 +12,20 @@ import {
 import { getUserRegistrationFunction } from '@umbra-privacy/sdk/registration'
 import { createU64 } from '@umbra-privacy/sdk/types'
 import { getATAIntoStealthPoolNoteCreatorProver } from '@umbra-privacy/sdk/zk-prover'
+import { getETAIntoATAWithdrawerFunction } from '@umbra-privacy/sdk/withdrawal'
 import type { WalletContextState } from '@solana/wallet-adapter-react'
-import { clusterApiUrl, Connection, PublicKey } from '@solana/web3.js'
+import {
+  clusterApiUrl,
+  Connection,
+  PublicKey,
+  SystemProgram,
+  TransactionInstruction,
+  TransactionMessage,
+  VersionedTransaction,
+} from '@solana/web3.js'
 
 
-import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, SOLANA_RPC_URL, USDC_MINT } from './network'
+import { NETWORK, NETWORK_LABEL, SOLANA_GENESIS_HASH, SOLANA_RPC_URL, USDC_MINT, USDT_MINT } from './network'
 
 const RPC_URL = SOLANA_RPC_URL || clusterApiUrl(NETWORK)
 const WS_URL =
@@ -25,6 +34,7 @@ const WS_URL =
 export const UMBRA_MINTS: Record<string, Address> = {
   SOL: address('So11111111111111111111111111111111111111112'),
   USDC: address(USDC_MINT),
+  ...(USDT_MINT ? { USDT: address(USDT_MINT) } : {}),
 }
 
 const TOKEN_PROGRAM_ID = new PublicKey('TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA')
@@ -33,9 +43,14 @@ const MIN_NATIVE_SOL_LAMPORTS = 50_000_000n
 
 export interface FundVaultParams {
   wallet: WalletContextState
-  token: 'USDC' | 'SOL'
+  token: 'USDC' | 'USDT' | 'SOL'
   totalAmountAtomic: bigint
   onStatus?: (message: string) => void
+}
+
+export interface PayrollPayoutRecipient {
+  walletAddress: string
+  amountAtomic: string
 }
 
 interface PrivateInvoiceParams {
@@ -186,7 +201,7 @@ async function checkBalances(
     throw new Error(`Could not check your SOL and ${token} balances. Check the Solana RPC and retry.`)
   }
 
-  const decimals = token === 'USDC' ? 6 : 9
+  const decimals = token === 'SOL' ? 9 : 6
   if (tokenAtomic < requiredTokenAtomic) {
     throw new Error(
       `Not enough ${token} in your wallet ATA. Current: ${formatTokenAmount(tokenAtomic, decimals)} ${token}; required: ${formatTokenAmount(requiredTokenAtomic, decimals)} ${token}.`,
@@ -354,4 +369,90 @@ export async function fundPayrollVault({
     throw new Error('Umbra deposit did not return a transaction signature.')
   }
   return String(result.queueSignature)
+}
+
+export async function releasePayrollToken({
+  wallet,
+  token,
+  totalAmountAtomic,
+  recipients,
+  onStatus,
+}: {
+  wallet: WalletContextState
+  token: 'USDC' | 'USDT'
+  totalAmountAtomic: bigint
+  recipients: PayrollPayoutRecipient[]
+  onStatus?: (message: string) => void
+}): Promise<{ releaseSignature: string; payoutSignatures: string[] }> {
+  if (!wallet.publicKey) throw new Error('Connect the employer wallet before releasing payroll.')
+  if (totalAmountAtomic <= 0n || recipients.length === 0) throw new Error('Payroll payout is empty.')
+
+  const { client } = await createClient(wallet)
+  const mint = UMBRA_MINTS[token]
+  if (!mint) throw new Error(`${token} is not configured for this network.`)
+  onStatus?.(`Withdrawing released ${token} from the Umbra vault...`)
+  const withdraw = getETAIntoATAWithdrawerFunction({ client })
+  const withdrawResult = await withdraw(
+    address(wallet.publicKey.toBase58()),
+    mint,
+    createU64({ value: totalAmountAtomic }),
+  )
+  const releaseSignature = String(withdrawResult.queueSignature)
+  if (!releaseSignature) throw new Error('Umbra withdrawal did not return a transaction signature.')
+
+  onStatus?.(`Sending ${token} payouts to recipients...`)
+  const connection = new Connection(RPC_URL, 'confirmed')
+  const employer = new PublicKey(wallet.publicKey.toBase58())
+  const mintPublicKey = new PublicKey(mint)
+  const sourceAta = await PublicKey.findProgramAddress(
+    [employer.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mintPublicKey.toBytes()],
+    ASSOCIATED_TOKEN_PROGRAM_ID,
+  )
+  const instructions: TransactionInstruction[] = []
+  for (const recipient of recipients) {
+    const destination = new PublicKey(recipient.walletAddress)
+    const destinationAta = await PublicKey.findProgramAddress(
+      [destination.toBytes(), TOKEN_PROGRAM_ID.toBytes(), mintPublicKey.toBytes()],
+      ASSOCIATED_TOKEN_PROGRAM_ID,
+    )
+    if (!(await connection.getAccountInfo(destinationAta[0], 'confirmed'))) {
+      instructions.push(new TransactionInstruction({
+        programId: ASSOCIATED_TOKEN_PROGRAM_ID,
+        keys: [
+          { pubkey: employer, isSigner: true, isWritable: true },
+          { pubkey: destinationAta[0], isSigner: false, isWritable: true },
+          { pubkey: destination, isSigner: false, isWritable: false },
+          { pubkey: mintPublicKey, isSigner: false, isWritable: false },
+          { pubkey: SystemProgram.programId, isSigner: false, isWritable: false },
+          { pubkey: TOKEN_PROGRAM_ID, isSigner: false, isWritable: false },
+        ],
+        data: new Uint8Array([1]),
+      }))
+    }
+    const data = new Uint8Array(10)
+    data[0] = 12
+    for (let index = 0; index < 8; index += 1) {
+      data[index + 1] = Number((BigInt(recipient.amountAtomic) >> BigInt(index * 8)) & 0xffn)
+    }
+    data[9] = 6
+    instructions.push(new TransactionInstruction({
+      programId: TOKEN_PROGRAM_ID,
+      keys: [
+        { pubkey: sourceAta[0], isSigner: false, isWritable: true },
+        { pubkey: mintPublicKey, isSigner: false, isWritable: false },
+        { pubkey: destinationAta[0], isSigner: false, isWritable: true },
+        { pubkey: employer, isSigner: true, isWritable: false },
+      ],
+      data,
+    }))
+  }
+  const blockhash = await connection.getLatestBlockhash('confirmed')
+  const message = new TransactionMessage({
+    payerKey: employer,
+    recentBlockhash: blockhash.blockhash,
+    instructions,
+  }).compileToV0Message()
+  const payoutSignature = await wallet.sendTransaction(new VersionedTransaction(message), connection)
+  await connection.confirmTransaction(payoutSignature, 'confirmed')
+  return { releaseSignature, payoutSignatures: [payoutSignature] }
 }

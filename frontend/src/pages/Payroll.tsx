@@ -9,13 +9,13 @@ import {
 } from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
 import { api } from '../services/api'
-import { fundPayrollVault } from '../lib/umbra'
+import { fundPayrollVault, releasePayrollToken } from '../lib/umbra'
 import { Money } from '../components/ui/Money'
 
 interface Rates { sol: string; usdc: string; asOf: string }
 
 // --- Types ---
-type PayoutToken = 'SOL'
+type PayoutToken = 'USDC'
 
 interface Recipient {
   id: string
@@ -35,7 +35,7 @@ interface ParsedCsvRow {
 interface PendingLock {
   groupId: string
   vaultSignature: string
-  quote: { rate: string; totalSol: string; recipients: Record<string, string> }
+  quote: { rate: string; totalToken: string; recipients: Record<string, string> }
 }
 
 // --- Helpers ---
@@ -57,16 +57,17 @@ const toScaledInteger = (value: string, decimals: number): bigint => {
   return BigInt(whole || '0') * 10n ** BigInt(decimals) + BigInt(fraction.padEnd(decimals, '0') || '0')
 }
 
-const ngnToLamports = (amountNgn: string, rateNgnPerSol: string): bigint => {
+const ngnToAtomic = (amountNgn: string, rateNgnPerToken: string, decimals: number): bigint => {
   const kobo = toScaledInteger(amountNgn, 2)
-  const scaledRate = toScaledInteger(Number(rateNgnPerSol).toFixed(6), 6)
-  const denominator = scaledRate
-  return (kobo * 10_000_000_000_000n + denominator / 2n) / denominator
+  const scaledRate = toScaledInteger(Number(rateNgnPerToken).toFixed(6), 6)
+  const numerator = kobo * 10n ** BigInt(decimals + 4)
+  return (numerator + scaledRate / 2n) / scaledRate
 }
 
-const lamportsToSol = (lamports: bigint): string => {
-  const whole = lamports / 1_000_000_000n
-  const fraction = (lamports % 1_000_000_000n).toString().padStart(9, '0').replace(/0+$/, '')
+const atomicToToken = (atomic: bigint, decimals: number): string => {
+  const scale = 10n ** BigInt(decimals)
+  const whole = atomic / scale
+  const fraction = (atomic % scale).toString().padStart(decimals, '0').replace(/0+$/, '')
   return fraction ? `${whole}.${fraction}` : whole.toString()
 }
 
@@ -77,8 +78,8 @@ export default function Payroll() {
   // Local State
   const [payrollDate, setPayrollDate] = useState('')
   const [payrollTime, setPayrollTime] = useState('')
-  const payrollToken: PayoutToken = 'SOL'
-  const [solRate, setSolRate] = useState<string | null>(null)
+  const payrollToken: PayoutToken = 'USDC'
+  const [usdcRate, setUsdcRate] = useState<string | null>(null)
   const [rateError, setRateError] = useState(false)
   const [recipients, setRecipients] = useState<Recipient[]>([
     { id: crypto.randomUUID(), name: '', address: '', amount: '' }
@@ -90,6 +91,8 @@ export default function Payroll() {
   const [successGroupId, setSuccessGroupId] = useState<string | null>(null)
   const [pendingLock, setPendingLock] = useState<PendingLock | null>(null)
   const [lockedQuote, setLockedQuote] = useState<PendingLock['quote'] | null>(null)
+  const [isReleasing, setIsReleasing] = useState(false)
+  const [releaseError, setReleaseError] = useState<string | null>(null)
 
   // CSV State
   const fileInputRef = useRef<HTMLInputElement>(null)
@@ -107,7 +110,7 @@ export default function Payroll() {
     const loadRate = async () => {
       try {
         const rates = await api<Rates>('/v1/rates')
-        if (active) { setSolRate(rates.sol); setRateError(false) }
+        if (active) { setUsdcRate(rates.usdc); setRateError(false) }
       } catch {
         if (active) setRateError(true)
       }
@@ -117,13 +120,13 @@ export default function Payroll() {
     return () => { active = false; window.clearInterval(interval) }
   }, [])
 
-  const estimateSol = useMemo(() => {
-    if (lockedQuote) return lockedQuote.totalSol
-    if (!solRate) return null
-    const lamports = recipients.reduce((sum, recipient) =>
-      sum + (isValidAmount(recipient.amount) ? ngnToLamports(recipient.amount, solRate) : 0n), 0n)
-    return lamportsToSol(lamports)
-  }, [lockedQuote, recipients, solRate])
+  const estimateToken = useMemo(() => {
+    if (lockedQuote) return lockedQuote.totalToken
+    if (!usdcRate) return null
+    const atomic = recipients.reduce((sum, recipient) =>
+      sum + (isValidAmount(recipient.amount) ? ngnToAtomic(recipient.amount, usdcRate, 6) : 0n), 0n)
+    return atomicToToken(atomic, 6)
+  }, [lockedQuote, recipients, usdcRate])
 
   // --- Recipient Management ---
   const addRecipient = () => {
@@ -233,7 +236,7 @@ export default function Payroll() {
 
     const invalid = filledRecipients.find(r => !r.name.trim() || !isValidSolanaAddress(r.address) || !isValidAmount(r.amount.trim()))
     if (invalid) { setError('One or more recipients have invalid details.'); return }
-    if (!solRate) { setError('The live SOL/NGN rate is unavailable. Try again shortly.'); return }
+    if (!usdcRate) { setError('The live USDC/NGN rate is unavailable. Try again shortly.'); return }
 
     const releaseAt = new Date(`${payrollDate}T${payrollTime}`)
     if (!Number.isFinite(releaseAt.getTime())) { setError('Please enter a valid release date and time.'); return }
@@ -249,13 +252,13 @@ export default function Payroll() {
         walletAddress: r.address.trim(),
         amountNgn: r.amount.trim(),
       }))
-      const totalAtomic = filledRecipients.reduce((sum, r) => sum + ngnToLamports(r.amount.trim(), solRate), 0n)
+      const totalAtomic = filledRecipients.reduce((sum, r) => sum + ngnToAtomic(r.amount.trim(), usdcRate, 6), 0n)
       const quote = {
-        rate: solRate,
-        totalSol: lamportsToSol(totalAtomic),
+        rate: usdcRate,
+        totalToken: atomicToToken(totalAtomic, 6),
         recipients: Object.fromEntries(filledRecipients.map((r) => [
           r.id,
-          lamportsToSol(ngnToLamports(r.amount.trim(), solRate)),
+          atomicToToken(ngnToAtomic(r.amount.trim(), usdcRate, 6), 6),
         ])),
       }
 
@@ -304,6 +307,38 @@ export default function Payroll() {
       setStatusMessage(null)
     } finally {
       setIsSubmitting(false)
+    }
+  }
+
+  const handleRelease = async () => {
+    if (!successGroupId || !lockedQuote) return
+    setReleaseError(null)
+    setIsReleasing(true)
+    try {
+      const payoutRecipients = recipients
+        .filter((recipient) => lockedQuote.recipients[recipient.id])
+        .map((recipient) => ({
+          walletAddress: recipient.address,
+          amountAtomic: String(ngnToAtomic(recipient.amount, lockedQuote.rate, 6)),
+        }))
+      const totalAtomic = payoutRecipients.reduce((sum, recipient) => sum + BigInt(recipient.amountAtomic), 0n)
+      const result = await releasePayrollToken({
+        wallet,
+        token: payrollToken,
+        totalAmountAtomic: totalAtomic,
+        recipients: payoutRecipients,
+        onStatus: setStatusMessage,
+      })
+      await api(`/v1/payroll/groups/${successGroupId}/release`, {
+        method: 'POST',
+        body: JSON.stringify(result),
+      })
+      setStatusMessage('Payroll released and USDC payouts confirmed.')
+    } catch (err) {
+      setReleaseError(err instanceof Error ? err.message : 'Failed to release payroll.')
+      setStatusMessage(null)
+    } finally {
+      setIsReleasing(false)
     }
   }
 
@@ -364,9 +399,9 @@ export default function Payroll() {
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <label className="text-sm font-medium text-foreground/70">Payout currency</label>
                   <div className="flex h-10 items-center rounded-lg bg-primary/5 px-3 text-sm font-medium text-primary">
-                    <span className="truncate">SOL (NGN)</span>
+                    <span className="truncate">USDC (NGN)</span>
                   </div>
-                  <span className="text-xs text-foreground/50">Enter amounts in NGN · SOL fixed on funding.</span>
+                  <span className="text-xs text-foreground/50">Enter amounts in NGN · USDC fixed on funding.</span>
                 </div>
                 <div className="flex min-w-0 flex-col gap-1.5">
                   <label className="text-sm font-medium text-foreground/70">Release Date</label>
@@ -424,7 +459,7 @@ export default function Payroll() {
                       <div key={row.rowNumber} title={row.errors.join(', ') || undefined} className="flex min-w-0 items-center gap-3 rounded-lg px-2 py-1 text-sm hover:bg-emerald-500/10">
                         {row.errors.length ? <WarningCircle className="text-red-500 dark:text-red-400" /> : <CheckCircle className="text-emerald-500 dark:text-emerald-400" />}
                         <span className="flex-1 truncate">{row.name || 'Unknown'}</span>
-                        <Money amountNgn={row.amount || 0} tokenAmount={solRate && isValidAmount(row.amount) ? lamportsToSol(ngnToLamports(row.amount, solRate)) : null} token="SOL" align="right" primaryClassName="text-xs font-medium text-emerald-800 dark:text-emerald-300" />
+                        <Money amountNgn={row.amount || 0} tokenAmount={usdcRate && isValidAmount(row.amount) ? atomicToToken(ngnToAtomic(row.amount, usdcRate, 6), 6) : null} token="USDC" align="right" primaryClassName="text-xs font-medium text-emerald-800 dark:text-emerald-300" />
                         {row.errors.length > 0 && <span className="max-w-32 truncate text-xs text-red-600 dark:text-red-400">{row.errors.join(', ')}</span>}
                       </div>
                     ))}
@@ -435,8 +470,8 @@ export default function Payroll() {
               {/* Manual Entry List */}
               <div className="space-y-3">
                 {recipients.map((recipient, index) => {
-                  const recipientSol = lockedQuote?.recipients[recipient.id]
-                    ?? (solRate && isValidAmount(recipient.amount) ? lamportsToSol(ngnToLamports(recipient.amount, solRate)) : null)
+                  const recipientToken = lockedQuote?.recipients[recipient.id]
+                    ?? (usdcRate && isValidAmount(recipient.amount) ? atomicToToken(ngnToAtomic(recipient.amount, usdcRate, 6), 6) : null)
 
                   return (
                     <div key={recipient.id} className="flex min-w-0 flex-col gap-1.5 rounded-xl bg-primary/[0.02] p-2">
@@ -480,12 +515,12 @@ export default function Payroll() {
                         </div>
                       </div>
 
-                      {recipientSol && (
+                      {recipientToken && (
                         <div className="flex justify-end pr-12">
                           <Money
                             amountNgn={recipient.amount}
-                            tokenAmount={recipientSol}
-                            token="SOL"
+                            tokenAmount={recipientToken}
+                            token="USDC"
                             align="right"
                             primaryClassName="text-xs text-foreground/60"
                           />
@@ -527,11 +562,11 @@ export default function Payroll() {
                 <div className="flex items-end justify-between">
                   <span className="text-sm font-medium text-foreground/70">Total Funding</span>
                   <div className="text-right">
-                    <Money amountNgn={total} tokenAmount={estimateSol} token="SOL" align="right" primaryClassName="text-3xl font-bold tracking-tight text-primary" />
+                <Money amountNgn={total} tokenAmount={estimateToken} token="USDC" align="right" primaryClassName="text-3xl font-bold tracking-tight text-primary" />
                   </div>
                 </div>
                 <p className="mt-2 text-right text-xs text-foreground/50">
-                  {lockedQuote ? `Locked funding rate · ₦${Number(lockedQuote.rate).toLocaleString('en-NG')} per SOL` : solRate ? `Live rate · ₦${Number(solRate).toLocaleString('en-NG')} per SOL` : rateError ? 'Live rate unavailable' : 'Loading live rate…'}
+                  {lockedQuote ? `Locked funding rate · ₦${Number(lockedQuote.rate).toLocaleString('en-NG')} per USDC` : usdcRate ? `Live rate · ₦${Number(usdcRate).toLocaleString('en-NG')} per USDC` : rateError ? 'Live rate unavailable' : 'Loading live rate…'}
                 </p>
               </div>
 
@@ -544,6 +579,8 @@ export default function Payroll() {
                 <>
                   {statusMessage && <p className="mt-4 text-center text-sm text-foreground/70" role="status">{statusMessage}</p>}
                   {successGroupId && <p className="mt-4 text-center text-sm font-medium text-green-700 dark:text-emerald-300" role="status">Payroll group {successGroupId} funded and locked.</p>}
+                  {releaseError && <p className="mt-4 text-center text-sm text-red-600 dark:text-red-300" role="alert">{releaseError}</p>}
+                  {successGroupId && <Button size="lg" fullWidth variant="secondary" disabled={isReleasing} onClick={() => void handleRelease()}>{isReleasing ? 'Releasing…' : 'Release USDC payroll'}</Button>}
                   {pendingLock && <Button size="sm" fullWidth variant="secondary" disabled={isSubmitting} onClick={handleRetryLock}>Retry locking payroll group</Button>}
                   <Button
                     size="lg"
@@ -559,7 +596,7 @@ export default function Payroll() {
               )}
 
               <p className="mt-4 text-center text-xs leading-relaxed text-foreground/50">
-                SOL deposits into your Umbra encrypted vault. Payroll group records are created here; automatic recipient payouts are not enabled yet.
+                USDC deposits into your Umbra encrypted vault, then release sends verified USDC payouts to each recipient.
               </p>
             </div>
           </div>
