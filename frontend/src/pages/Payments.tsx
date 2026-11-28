@@ -7,6 +7,7 @@ import {
   GlobeHemisphereWest,
   Link as LinkIcon,
   LockKey,
+  XCircle,
 } from '@phosphor-icons/react'
 import { Button } from '../components/ui/Button'
 import { QRCodeSVG } from 'qrcode.react'
@@ -39,6 +40,7 @@ interface PaymentIntent {
   settlementTarget?: 'crypto' | 'fiat'
   paidVia?: PaidViaRail | null
   status?: 'created' | 'funded' | 'claimed' | 'failed'
+  failureReason?: string | null
   fiatCheckout?: FiatPayment | null
   pajOfframp?: PajOfframpOrder | null
   fiatPayout?: FiatPayment | { status: string; bankName?: string | null } | null
@@ -52,6 +54,7 @@ function getGeneratedStatusBadge(payment: {
   receiveMode: 'public' | 'private'
   pajOfframp: PajOfframpOrder | null
   fiatPayout: FiatPayment | { status: string; bankName?: string | null } | null
+  failureReason?: string | null
 }): { label: string; className: string } {
   const settledStyle = 'bg-emerald-100 text-emerald-800 dark:bg-emerald-500/15 dark:text-emerald-300'
   const processingStyle = 'bg-primary/10 text-primary'
@@ -81,6 +84,9 @@ function getGeneratedStatusBadge(payment: {
   }
   if (payment.status === 'funded' && payment.receiveMode === 'private') {
     return { label: 'Awaiting claim', className: pendingStyle }
+  }
+  if (payment.status === 'failed' && payment.failureReason === 'cancelled') {
+    return { label: 'Cancelled', className: failedStyle }
   }
   if (payment.status === 'failed') {
     return { label: 'Failed', className: failedStyle }
@@ -126,6 +132,7 @@ export default function Payments() {
   const [pajRate, setPajRate] = useState<number | null>(null)
   const [isLoading, setIsLoading] = useState(false)
   const [checkingFiat, setCheckingFiat] = useState(false)
+  const [cancelling, setCancelling] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [generatedLink, setGeneratedLink] = useState<string | null>(null)
   const [generatedPayment, setGeneratedPayment] = useState<{
@@ -133,6 +140,7 @@ export default function Payments() {
     amountNgn: string
     tokenAmount: string
     status: 'created' | 'funded' | 'claimed' | 'failed'
+    failureReason?: string | null
     paidVia: PaidViaRail | null
     fiatCheckout: FiatPayment | null
     pajOfframp: PajOfframpOrder | null
@@ -316,6 +324,7 @@ export default function Payments() {
           intent.amount_token ??
           (Number(intent.amountAtomic) / 1e6).toString(),
         status: intent.status ?? 'created',
+        failureReason: intent.failureReason ?? null,
         paidVia: intent.paidVia ?? null,
         fiatCheckout: intent.fiatCheckout ?? null,
         pajOfframp: intent.pajOfframp ?? null,
@@ -365,6 +374,31 @@ export default function Payments() {
       setError(err instanceof Error ? err.message : 'Could not reconcile payment status.')
     } finally {
       setCheckingFiat(false)
+    }
+  }
+
+  async function cancelGeneratedIntent() {
+    if (!generatedPayment || generatedPayment.status !== 'created') return
+    if (!window.confirm('Cancel this unpaid payment link? Customers will no longer be able to pay it.')) return
+    setCancelling(true)
+    setError(null)
+    try {
+      const cancelled = await api<PaymentIntent>(`/v1/payments/intents/${generatedPayment.id}/cancel`, {
+        method: 'POST',
+      })
+      setGeneratedPayment((prev) =>
+        prev
+          ? {
+              ...prev,
+              status: cancelled.status ?? 'failed',
+              failureReason: cancelled.failureReason ?? 'cancelled',
+            }
+          : prev,
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not cancel the payment link.')
+    } finally {
+      setCancelling(false)
     }
   }
 
@@ -573,6 +607,17 @@ export default function Payments() {
             )}
 
             {error && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{error}</p>}
+            {generatedPayment?.status === 'created' && (
+              <Button
+                className="mt-6"
+                variant="secondary"
+                loading={cancelling}
+                onClick={() => void cancelGeneratedIntent()}
+                leftIcon={<XCircle size={17} />}
+              >
+                Cancel payment link
+              </Button>
+            )}
             <Button
               className="mt-6"
               variant="secondary"

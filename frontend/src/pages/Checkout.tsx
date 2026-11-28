@@ -844,7 +844,8 @@ export default function Checkout() {
   }
 
   const displayAmount = formatAmount(invoice.amountAtomic, token.decimals)
-  const expired = invoice.status === 'failed' || invoice.failureReason === 'expired' || (remainingSeconds !== null && remainingSeconds <= 0)
+  const cancelled = invoice.failureReason === 'cancelled'
+  const expired = !cancelled && (invoice.status === 'failed' || invoice.failureReason === 'expired' || (remainingSeconds !== null && remainingSeconds <= 0))
   const countdown = remainingSeconds === null
     ? null
     : `${Math.floor(remainingSeconds / 60).toString().padStart(2, '0')}:${(remainingSeconds % 60).toString().padStart(2, '0')}`
@@ -1007,6 +1008,17 @@ export default function Checkout() {
             The merchant must withdraw the funds from the private receiving address to complete settlement.
           </p>
         )}
+      </CheckoutFrame>
+    )
+  }
+
+  if (cancelled) {
+    return (
+      <CheckoutFrame>
+        <WarningCircle size={42} className="mx-auto text-amber-500" weight="fill" />
+        <h1 className="mt-4 text-2xl font-semibold text-primary">Payment link cancelled</h1>
+        <p className="mt-2 text-sm text-foreground/65">This payment request is no longer accepting payments. Ask the merchant for a new link.</p>
+        <Money amountNgn={invoice.amount_ngn} tokenAmount={displayAmount} token={token.symbol} className="mx-auto mt-4" primaryClassName="text-xl font-semibold text-primary" />
       </CheckoutFrame>
     )
   }

@@ -856,6 +856,8 @@ def format_intent(
     }
     if intent.receive_mode != "private":
         data["fundSignature"] = intent.fund_signature
+    if intent.failure_reason == "cancelled":
+        data["failureReason"] = "cancelled"
     # Only show these fields to the merchant who owns the intent
     if is_owner:
         data.update({
@@ -1247,6 +1249,48 @@ async def get_intent(
     return format_intent(
         intent,
         is_owner=is_owner,
+        fiat_checkout=fiat_checkout,
+        paj_offramp=paj_offramp,
+        bank_account=bank_account,
+        fiat_payout=fiat_payout,
+    )
+
+
+@router.post("/intents/{intent_id}/cancel")
+async def cancel_intent(
+    intent_id: str,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    """Cancel an unpaid payment link owned by the merchant."""
+    uuid_id = parse_uuid(intent_id)
+    intent = await db.get(PaymentIntent, uuid_id)
+    if not intent or intent.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="intent_not_found")
+    if intent.status != "created":
+        raise HTTPException(status_code=409, detail="Only an unpaid payment link can be cancelled.")
+
+    intent.status = "failed"
+    intent.failure_reason = "cancelled"
+    intent.updated_at = utc_now()
+    await record_trace_event(
+        db,
+        source="intent",
+        event_type="intent_cancelled",
+        summary="Merchant cancelled an unpaid payment request",
+        status="warn",
+        payment_intent_id=intent.id,
+    )
+    await db.commit()
+    await db.refresh(intent)
+
+    fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+    paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
+    fiat_payout = await _latest_payout_for_intent(db, intent.id)
+    bank_account = await db.get(MerchantBankAccount, intent.bank_account_id) if intent.bank_account_id else None
+    return format_intent(
+        intent,
+        is_owner=True,
         fiat_checkout=fiat_checkout,
         paj_offramp=paj_offramp,
         bank_account=bank_account,
