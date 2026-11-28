@@ -1,4 +1,4 @@
-import { ArrowsLeftRight, GearSix, ShieldCheck, SquaresFour, UsersThree, type Icon } from '@phosphor-icons/react'
+import { ArrowsLeftRight, GearSix, Receipt, ShieldCheck, SquaresFour, UsersThree, type Icon } from '@phosphor-icons/react'
 
 export interface NavItem {
   to: string
@@ -10,6 +10,7 @@ export interface NavItem {
 export const NAV_ITEMS: NavItem[] = [
   { to: '/app', label: 'Dashboard', icon: SquaresFour },
   { to: '/payments', label: 'Payments', icon: ArrowsLeftRight },
+  { to: '/transactions', label: 'Transactions', icon: Receipt },
   { to: '/payroll', label: 'Payroll', icon: UsersThree },
   { to: '/admin', label: 'Admin', icon: ShieldCheck, adminOnly: true },
   { to: '/settings', label: 'Settings', icon: GearSix },

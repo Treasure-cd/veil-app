@@ -66,6 +66,18 @@ class CreatePaymentIntentRequest(BaseModel):
     includeFiatCheckout: bool = False
     feeBearer: Literal["customer", "merchant"] = "customer"
 
+
+class UpdatePaymentIntentRequest(BaseModel):
+    amount_ngn: Optional[Decimal] = Field(default=None, validation_alias=AliasChoices("amount_ngn", "amountNgn"))
+    memo: Optional[str] = None
+
+    @field_validator("amount_ngn")
+    @classmethod
+    def validate_amount(cls, value: Decimal | None):
+        if value is not None and (not value.is_finite() or value <= 0):
+            raise ValueError("amount_ngn must be a positive number")
+        return value
+
     @model_validator(mode="after")
     def validate_recipient(self):
         # Fiat-settled intents are routed to the linked bank account's Paj
@@ -1205,6 +1217,75 @@ async def create_intent(
         fiat_checkout=fiat_checkout,
         bank_account=bank_account,
     )
+
+@router.get("/intents")
+async def list_intents(
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    intents = (
+        await db.execute(
+            select(PaymentIntent)
+            .where(PaymentIntent.user_id == current_user.id)
+            .order_by(PaymentIntent.created_at.desc())
+            .limit(100)
+        )
+    ).scalars().all()
+    result = []
+    for intent in intents:
+        fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
+        paj_offramp = await _latest_paj_offramp_for_intent(db, intent.id)
+        fiat_payout = await _latest_payout_for_intent(db, intent.id)
+        bank_account = await db.get(MerchantBankAccount, intent.bank_account_id) if intent.bank_account_id else None
+        result.append(format_intent(
+            intent,
+            is_owner=True,
+            fiat_checkout=fiat_checkout,
+            paj_offramp=paj_offramp,
+            bank_account=bank_account,
+            fiat_payout=fiat_payout,
+        ))
+    return result
+
+
+@router.patch("/intents/{intent_id}")
+async def update_intent(
+    intent_id: str,
+    req: UpdatePaymentIntentRequest,
+    current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_session),
+):
+    uuid_id = parse_uuid(intent_id)
+    intent = await db.get(PaymentIntent, uuid_id)
+    if not intent or intent.user_id != current_user.id:
+        raise HTTPException(status_code=404, detail="intent_not_found")
+    if intent.status != "created":
+        raise HTTPException(status_code=409, detail="Only an unpaid payment request can be edited.")
+    if req.amount_ngn is None and req.memo is None:
+        raise HTTPException(status_code=400, detail="Provide an amount or memo to update.")
+
+    if req.amount_ngn is not None:
+        decimals = 6 if intent.mint in settings.known_usdc_mints else 9
+        rate = Decimal(intent.rate_ngn_per_token or "0")
+        if rate <= 0:
+            raise HTTPException(status_code=409, detail="This payment request has no locked exchange rate.")
+        intent.amount_ngn = str(req.amount_ngn)
+        intent.amount_atomic = str(int((req.amount_ngn / rate * (Decimal(10) ** decimals)).quantize(Decimal("1"), rounding=ROUND_DOWN)))
+    if req.memo is not None:
+        intent.memo = req.memo.strip() or None
+    intent.updated_at = utc_now()
+    await record_trace_event(
+        db,
+        source="intent",
+        event_type="intent_updated",
+        summary="Merchant updated an unpaid payment request",
+        status="info",
+        payment_intent_id=intent.id,
+    )
+    await db.commit()
+    await db.refresh(intent)
+    return format_intent(intent, is_owner=True)
+
 
 @router.get("/intents/{intent_id}")
 async def get_intent(

@@ -2,6 +2,7 @@ import { Routes, Route } from 'react-router'
 import { AppLayout } from './components/layout/AppLayout'
 import Dashboard from './pages/Dashboard'
 import Payments from './pages/Payments'
+import Transactions from './pages/Transactions'
 import Payroll from './pages/Payroll'
 import Settings from './pages/Settings'
 import Admin from './pages/Admin'
@@ -19,6 +20,7 @@ function App() {
           <Route element={<AppLayout />}>
             <Route path="/app" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
+            <Route path="/transactions" element={<Transactions />} />
             <Route path="/payroll" element={<Payroll />} />
             <Route path="/admin" element={<Admin />} />
             <Route path="/settings" element={<Settings />} />
