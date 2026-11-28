@@ -14,7 +14,7 @@ from sqlalchemy import text
 from core.config import settings
 from app import models
 from core.session import engine
-from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin
+from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin, settings as settings_router
 from app.services.trace import SEED_ADMIN_ADDRESSES
 
 
@@ -48,6 +48,9 @@ async def _ensure_postgres_schema() -> None:
         await conn.execute(text("SELECT pg_advisory_xact_lock(73290411)"))
         await conn.execute(
             text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE')
+        )
+        await conn.execute(
+            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS default_settlement_target VARCHAR')
         )
         await conn.execute(
             text("ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS paid_via VARCHAR")
@@ -200,6 +203,7 @@ app.include_router(rates.router, prefix="/v1")
 app.include_router(whatsapp.router, prefix="/v1")
 app.include_router(whatsapp_accounts.router, prefix="/v1")
 app.include_router(admin.router, prefix="/v1")
+app.include_router(settings_router.router, prefix="/v1")
 
 @app.get("/")
 async def root():
