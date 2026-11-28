@@ -138,7 +138,7 @@ export default function WhatsAppMockup() {
   const showTyping = count < MESSAGES.length && upcoming?.from === 'bot'
 
   return (
-    <div className="w-full max-w-[300px] shrink-0 overflow-hidden rounded-[40px] border-[7px] border-[#1a0a20] bg-[#1a0a20] shadow-[0_32px_80px_rgba(46,0,66,0.35)]">
+    <div className="mx-auto w-[clamp(200px,28vw,300px)] max-w-[calc(100vw-2rem)] shrink-0 overflow-hidden rounded-[40px] border-[7px] border-[#1a0a20] bg-[#1a0a20] shadow-[0_32px_80px_rgba(46,0,66,0.35)]">
       {/* status bar */}
       <div className="flex h-7 items-center justify-between px-5">
         <span className="text-[9px] font-medium text-white">9:41</span>
@@ -160,7 +160,7 @@ export default function WhatsAppMockup() {
       </div>
 
       {/* chat */}
-      <div className="flex h-[340px] flex-col justify-end gap-2 overflow-hidden bg-[#f3ecf8] p-2.5 dark:bg-[#120a1c]">
+      <div className="flex h-[clamp(260px,38vh,340px)] min-h-0 flex-col justify-end gap-2 overflow-y-auto bg-[#f3ecf8] p-2.5 dark:bg-[#120a1c]">
         <AnimatePresence initial={false}>
           {MESSAGES.slice(0, count).map((m) => (
             <Bubble key={m.id} msg={m} />
