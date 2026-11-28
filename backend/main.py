@@ -1,6 +1,8 @@
+import subprocess
 import sys
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
+from pathlib import Path
 from uuid import uuid4
 
 import uvicorn
@@ -14,6 +16,24 @@ from app import models
 from core.session import engine
 from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin
 from app.services.trace import SEED_ADMIN_ADDRESSES
+
+
+def run_migrations() -> None:
+    logger.info("Checking for pending Alembic migrations...")
+    result = subprocess.run(
+        [sys.executable, "-m", "alembic", "upgrade", "heads"],
+        capture_output=True,
+        text=True,
+        cwd=Path(__file__).resolve().parent,
+    )
+    output = "\n".join(
+        part.strip() for part in (result.stdout, result.stderr) if part.strip()
+    )
+    if result.returncode != 0:
+        logger.error("Alembic migration failed:\n{}", output)
+        raise RuntimeError("Database migration failed on startup")
+    if output:
+        logger.info("Alembic output:\n{}", output)
 
 
 async def _ensure_postgres_schema() -> None:
@@ -130,6 +150,7 @@ async def _ensure_postgres_schema() -> None:
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting Veil API...")
+    run_migrations()
     await _ensure_postgres_schema()
     yield
     logger.info("Shutting down Veil API...")
@@ -139,7 +160,7 @@ app = FastAPI(
     title="Veil API",
     description="""Seamless payment and automated payroll solution for SMEs and corporate clients.
     Veil transforms everyday mobile devices into complete payment terminals (Invoicing & Tap-to-Pay)
-    and replaces exgposed corporate ledgers with confidential, cross-border-ready payroll — all settled
+    and replaces exposed corporate ledgers with confidential, cross-border-ready payroll — all settled
     instantly in local fiat.""",
     lifespan=lifespan,
 )
@@ -150,13 +171,9 @@ async def handle_unexpected_error(request: Request, exc: Exception):
     if request.url.path == "/v1/whatsapp/webhook":
         logger.exception("Unhandled WhatsApp webhook error", exc_info=exc)
         return Response(
-            content=(
-                '<?xml version="1.0" encoding="UTF-8"?>'
-                '<Response><Message><Body>'
-                "Sorry, Veil couldn't process that just now. Please try again shortly."
-                "</Body></Message></Response>"
-            ),
-            media_type="application/xml",
+            content='{"status":"ok"}',
+            status_code=200,
+            media_type="application/json",
         )
     logger.exception("Unhandled API error", exc_info=exc)
     return Response(content='{"detail":"Internal server error"}', status_code=500, media_type="application/json")
