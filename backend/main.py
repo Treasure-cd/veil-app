@@ -50,15 +50,6 @@ async def _ensure_postgres_schema() -> None:
             text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE')
         )
         await conn.execute(
-            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR')
-        )
-        await conn.execute(
-            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS password_hash VARCHAR')
-        )
-        await conn.execute(
-            text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_email ON "user" (email) WHERE email IS NOT NULL')
-        )
-        await conn.execute(
             text("ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS paid_via VARCHAR")
         )
         await conn.execute(
@@ -80,6 +71,30 @@ async def _ensure_postgres_schema() -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_whatsapp_setup_tokens_phone_e164 "
                 "ON whatsapp_setup_tokens (phone_e164)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS whatsapp_auth_challenges ("
+                "token VARCHAR(64) PRIMARY KEY, "
+                "code VARCHAR(12) NOT NULL UNIQUE, "
+                "phone_e164 VARCHAR, "
+                'user_id UUID REFERENCES "user"(id), '
+                "expires_at TIMESTAMPTZ NOT NULL, "
+                "verified_at TIMESTAMPTZ, "
+                "consumed_at TIMESTAMPTZ)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_whatsapp_auth_challenges_phone_e164 "
+                "ON whatsapp_auth_challenges (phone_e164)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_whatsapp_auth_challenges_user_id "
+                "ON whatsapp_auth_challenges (user_id)"
             )
         )
         await conn.execute(

@@ -1,6 +1,13 @@
 import bs58 from 'bs58'
 import { api } from '../services/api'
-import type { AuthUser, ChallengeResponse, LoginPayload, LoginResponse } from './auth.types'
+import type {
+  AuthUser,
+  ChallengeResponse,
+  LoginPayload,
+  LoginResponse,
+  WhatsAppAuthChallengeResponse,
+  WhatsAppAuthPollResponse,
+} from './auth.types'
 
 export const requestChallenge = (address: string) =>
   api<ChallengeResponse>('/v1/auth/challenge', {
@@ -14,17 +21,15 @@ export const login = (payload: LoginPayload) =>
     body: JSON.stringify(payload),
   })
 
-export const registerEmail = (email: string, password: string) =>
-  api<LoginResponse>('/v1/auth/register', {
+export const startWhatsAppAuth = () =>
+  api<WhatsAppAuthChallengeResponse>('/v1/auth/whatsapp/challenge', {
     method: 'POST',
-    body: JSON.stringify({ email, password }),
   })
 
-export const loginEmail = (email: string, password: string) =>
-  api<LoginResponse>('/v1/auth/login-email', {
-    method: 'POST',
-    body: JSON.stringify({ email, password }),
-  })
+export const pollWhatsAppAuth = (challengeToken: string) =>
+  api<WhatsAppAuthPollResponse>(
+    `/v1/auth/whatsapp/poll/${encodeURIComponent(challengeToken)}`,
+  )
 
 export const fetchMe = () => api<AuthUser>('/v1/auth/me')
 

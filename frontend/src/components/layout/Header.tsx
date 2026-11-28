@@ -1,4 +1,4 @@
-import { Plus, SignOut, EnvelopeSimple } from '@phosphor-icons/react'
+import { Plus, SignOut, WhatsappLogo } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../auth/useAuth'
 import Logo from '../Logo'
@@ -26,9 +26,9 @@ function NetworkBadge() {
   )
 }
 
-/** Returns true if the user logged in via email (placeholder address). */
-function isEmailUser(address?: string | null): boolean {
-  return Boolean(address?.startsWith('email:'))
+/** Returns true if the user signed in via WhatsApp without a Solana wallet. */
+function isWhatsAppOnlyUser(address?: string | null, hasWallet?: boolean): boolean {
+  return hasWallet === false || Boolean(address?.startsWith('whatsapp:'))
 }
 
 export function Header() {
@@ -38,7 +38,7 @@ export function Header() {
   const [disconnecting, setDisconnecting] = useState(false)
   const walletMenuRef = useRef<HTMLDivElement>(null)
 
-  const emailMode = isEmailUser(user?.address)
+  const whatsAppOnly = isWhatsAppOnlyUser(user?.address, user?.hasWallet)
 
   useEffect(() => {
     if (!walletMenuOpen) return
@@ -60,7 +60,7 @@ export function Header() {
     setDisconnecting(true)
     setWalletMenuOpen(false)
     try {
-      if (emailMode) {
+      if (whatsAppOnly) {
         signOut()
       } else {
         await disconnectWallet()
@@ -78,7 +78,7 @@ export function Header() {
       <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2 md:gap-3">
         <ThemeToggle />
         <MoneyDisplayToggle />
-        {!emailMode && <NetworkBadge />}
+        {!whatsAppOnly && <NetworkBadge />}
         <Button
           size="sm"
           className="hidden sm:inline-flex"
@@ -90,7 +90,7 @@ export function Header() {
         </Button>
         {/* User profile anchor */}
         <div className="relative" ref={walletMenuRef}>
-          {emailMode ? (
+          {whatsAppOnly ? (
             <Button
               variant="secondary"
               size="sm"
@@ -98,9 +98,9 @@ export function Header() {
               aria-haspopup="menu"
               aria-expanded={walletMenuOpen}
               onClick={() => setWalletMenuOpen((open) => !open)}
-              leftIcon={<EnvelopeSimple size={16} weight="bold" className="hidden sm:inline" />}
+              leftIcon={<WhatsappLogo size={16} weight="fill" className="hidden text-[#128C4A] sm:inline dark:text-[#25D366]" />}
             >
-              <span className="max-w-[12ch] truncate">{user?.email ?? 'Account'}</span>
+              <span className="max-w-[14ch] truncate font-mono">{user?.phoneMasked ?? 'WhatsApp'}</span>
             </Button>
           ) : (
             <ConnectWalletButton
@@ -119,10 +119,13 @@ export function Header() {
             >
               <div className="px-3 py-2.5">
                 <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
-                  {emailMode ? 'Email account' : 'Connected wallet'}
+                  {whatsAppOnly ? 'WhatsApp account' : 'Connected wallet'}
                 </p>
-                <p className="mt-1 truncate font-mono text-sm text-foreground" title={emailMode ? user.email ?? '' : user.address}>
-                  {emailMode ? user.email : user.address}
+                <p
+                  className="mt-1 truncate font-mono text-sm text-foreground"
+                  title={whatsAppOnly ? user.phoneMasked ?? 'WhatsApp' : user.address}
+                >
+                  {whatsAppOnly ? user.phoneMasked ?? 'WhatsApp' : user.address}
                 </p>
               </div>
               <div className="my-1 h-px bg-primary/10" />
@@ -134,7 +137,7 @@ export function Header() {
                 className="flex min-h-11 w-full items-center gap-2.5 rounded-card px-3 text-left text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40"
               >
                 <SignOut size={18} weight="bold" aria-hidden="true" />
-                {disconnecting ? 'Signing out…' : emailMode ? 'Sign out' : 'Disconnect'}
+                {disconnecting ? 'Signing out…' : whatsAppOnly ? 'Sign out' : 'Disconnect'}
               </button>
             </div>
           )}

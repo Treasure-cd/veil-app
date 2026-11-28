@@ -53,3 +53,15 @@ class WhatsAppSetupToken(SQLModel, table=True):
     phone_e164: str = Field(index=True)
     expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
     used_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+
+
+class WhatsAppAuthChallenge(SQLModel, table=True):
+    __tablename__ = "whatsapp_auth_challenges"
+
+    token: str = Field(primary_key=True, max_length=64)
+    code: str = Field(sa_column=Column(String(12), unique=True, nullable=False, index=True))
+    phone_e164: str | None = Field(default=None, index=True)
+    user_id: UUID | None = Field(default=None, foreign_key="user.id", index=True)
+    expires_at: datetime = Field(sa_column=Column(DateTime(timezone=True), nullable=False))
+    verified_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))
+    consumed_at: datetime | None = Field(default=None, sa_column=Column(DateTime(timezone=True), nullable=True))

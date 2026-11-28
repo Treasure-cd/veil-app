@@ -23,7 +23,10 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DemoLinkResponse | null>(null)
   const [resultWalletAddress, setResultWalletAddress] = useState<string | null>(null)
-  const walletLinked = status === 'authenticated' && Boolean(user?.address)
+  const walletLinked =
+    status === 'authenticated' &&
+    user?.hasWallet !== false &&
+    Boolean(user?.address && !user.address.startsWith('whatsapp:'))
 
   useEffect(() => {
     const dialog = dialogRef.current

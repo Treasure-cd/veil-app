@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { AuthStatus, AuthUser, SignInStep } from './auth.types'
+import type { AuthStatus, AuthUser, LoginResponse, SignInStep } from './auth.types'
 
 export interface AuthContextValue {
   status: AuthStatus
@@ -8,7 +8,7 @@ export interface AuthContextValue {
   error: string | null
   authModalOpen: boolean
   signIn: () => Promise<void>
-  signInWithEmail: (email: string, password: string, isRegister: boolean) => Promise<void>
+  completeWhatsAppSignIn: (res: LoginResponse) => void
   signOut: () => void
   disconnectWallet: () => Promise<void>
   openAuthModal: () => void
