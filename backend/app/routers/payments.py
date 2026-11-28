@@ -35,6 +35,7 @@ from app.services.pajcash import PAJ_SOLANA_TOKENS, PajCashError, PajCashService
 from app.services.payment import FossaPayError, FossaPayService
 from app.services.payment_intents import create_payment_intent
 from app.services.trace import record_trace_event
+from app.services.whatsapp_notifications import notify_merchant_payment_received
 from core.config import settings
 from core.session import get_session
 
@@ -304,11 +305,19 @@ async def mark_intent_funded_from_paj(
         or not order.payment_intent_id
     ):
         return None
-    intent = await db.get(PaymentIntent, order.payment_intent_id)
+    intent = (
+        await db.execute(
+            select(PaymentIntent)
+            .where(PaymentIntent.id == order.payment_intent_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().first()
     expired_candidate = intent is not None and intent.status == "failed" and intent.failure_reason == "expired"
     if intent and (intent.status in ("created", "funded") or expired_candidate):
+        transitioned_to_funded = intent.status == "created" or expired_candidate
         changed = False
-        if intent.status == "created" or expired_candidate:
+        if transitioned_to_funded:
             intent.status = "funded"
             intent.failure_reason = None
             changed = True
@@ -339,6 +348,8 @@ async def mark_intent_funded_from_paj(
         )
         await db.commit()
         await db.refresh(intent)
+        if transitioned_to_funded:
+            await notify_merchant_payment_received(db, intent)
     return intent
 
 
@@ -514,7 +525,14 @@ async def mark_intent_funded_from_fiat(
         or not payment.payment_intent_id
     ):
         return None
-    intent = await db.get(PaymentIntent, payment.payment_intent_id)
+    intent = (
+        await db.execute(
+            select(PaymentIntent)
+            .where(PaymentIntent.id == payment.payment_intent_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+    ).scalars().first()
     expired_candidate = intent is not None and intent.status == "failed" and intent.failure_reason == "expired"
     if intent and (intent.status == "created" or expired_candidate):
         intent.status = "funded"
@@ -540,6 +558,7 @@ async def mark_intent_funded_from_fiat(
         )
         await db.commit()
         await db.refresh(intent)
+        await notify_merchant_payment_received(db, intent)
     if intent is not None:
         await _settle_fiat_intent_payout(db, intent, payment)
     return intent
@@ -701,6 +720,7 @@ async def _find_matching_onchain_transfer(
                         )
                         await db.commit()
                         await db.refresh(intent)
+                        await notify_merchant_payment_received(db, intent)
                         return True
     except Exception as exc:
         logger.warning("On-chain reconciliation failed for intent %s: %s", intent.id, exc)
@@ -1618,6 +1638,7 @@ async def confirm_fund(
         await db.rollback()
         raise HTTPException(status_code=409, detail="Signature already used") from exc
     await db.refresh(intent)
+    await notify_merchant_payment_received(db, intent)
     fiat_checkout = await _latest_checkout_for_intent(db, intent.id)
     bank_account = (
         await db.get(MerchantBankAccount, intent.bank_account_id)

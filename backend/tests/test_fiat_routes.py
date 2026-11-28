@@ -25,9 +25,11 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401
 from app.models.payment import FiatPayment, FiatPaymentFlow, FiatPaymentStatus, PaymentIntent
 from app.models.user import User
+from app.models.whatsapp import WhatsAppLink
 from core.config import settings
 from core.session import get_session
 from app.routers import payments as payment_routes
+from app.services.whatsapp_notifications import notify_merchant_payment_received
 from main import app
 
 
@@ -76,6 +78,57 @@ class FiatRouterTests(unittest.IsolatedAsyncioTestCase):
     async def asyncTearDown(self) -> None:
         app.dependency_overrides.clear()
         await self.engine.dispose()
+
+    async def test_payment_alert_is_sent_to_linked_merchant(self) -> None:
+        intent = PaymentIntent(
+            user_id=self.user.id,
+            merchant_ref="INV-ALERT-1",
+            mint=settings.USDC_MINT,
+            amount_atomic="3120000",
+            amount_ngn="5000",
+            recipient_address=self.user.address,
+            memo="Lunch order",
+            status="funded",
+        )
+        async with self.session_factory() as db:
+            db.add(intent)
+            db.add(WhatsAppLink(merchant_id=self.user.id, phone_e164="+2348012345678"))
+            await db.commit()
+            await db.refresh(intent)
+            with patch(
+                "app.services.whatsapp_notifications.send_whatsapp",
+                new=AsyncMock(),
+            ) as send_alert:
+                await notify_merchant_payment_received(db, intent)
+
+        send_alert.assert_awaited_once()
+        phone_number, message = send_alert.await_args.args
+        self.assertEqual(phone_number, "+2348012345678")
+        self.assertIn("Payment received", message)
+        self.assertIn("₦5,000 (≈ 3.12 USDC)", message)
+        self.assertIn("Lunch order", message)
+
+    async def test_payment_alert_is_skipped_without_whatsapp_link(self) -> None:
+        intent = PaymentIntent(
+            user_id=self.user.id,
+            merchant_ref="INV-ALERT-2",
+            mint=settings.USDC_MINT,
+            amount_atomic="1000000",
+            amount_ngn="1500",
+            recipient_address=self.user.address,
+            status="funded",
+        )
+        async with self.session_factory() as db:
+            db.add(intent)
+            await db.commit()
+            await db.refresh(intent)
+            with patch(
+                "app.services.whatsapp_notifications.send_whatsapp",
+                new=AsyncMock(),
+            ) as send_alert:
+                await notify_merchant_payment_received(db, intent)
+
+        send_alert.assert_not_awaited()
 
     async def test_intent_fiat_checkout_and_webhook_marks_intent_funded(self) -> None:
         async with self.session_factory() as db:
@@ -165,11 +218,30 @@ class FiatRouterTests(unittest.IsolatedAsyncioTestCase):
             "timestamp": "2026-11-25T21:40:01.000Z",
         }
         with patch.object(settings, "FOSSAPAY_WEBHOOK_SECRET", "whsec_test_secret"):
-            ok_webhook = self.client.post(
-                "/v1/webhook/fossapay",
-                json=webhook_payload,
-                headers={"x-fossapay-Signature": _sign_webhook(data)},
-            )
+            async with self.session_factory() as db:
+                db.add(WhatsAppLink(merchant_id=self.user.id, phone_e164="+2348012345678"))
+                await db.commit()
+            with patch(
+                "app.services.whatsapp_notifications.send_whatsapp",
+                new=AsyncMock(side_effect=RuntimeError("Meta API unavailable")),
+            ) as send_alert:
+                ok_webhook = self.client.post(
+                    "/v1/webhook/fossapay",
+                    json=webhook_payload,
+                    headers={"x-fossapay-Signature": _sign_webhook(data)},
+                )
+                duplicate_webhook = self.client.post(
+                    "/v1/webhook/fossapay",
+                    json=webhook_payload,
+                    headers={"x-fossapay-Signature": _sign_webhook(data)},
+                )
+                self.assertEqual(duplicate_webhook.status_code, 200)
+                send_alert.assert_awaited_once()
+                message = send_alert.await_args.args[1]
+                self.assertIn("Payment received", message)
+                self.assertIn("₦1,500", message)
+                self.assertIn("Logo design", message)
+                self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/payments", message)
         self.assertEqual(ok_webhook.status_code, 200)
         self.assertTrue(ok_webhook.json()["accepted"])
 

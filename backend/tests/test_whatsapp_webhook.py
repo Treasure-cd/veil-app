@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from unittest.mock import AsyncMock, patch
 from uuid import uuid4
+from zoneinfo import ZoneInfo
 
 os.environ.setdefault("DATABASE_URL", "sqlite+aiosqlite:///:memory:")
 os.environ.setdefault("JWT_SECRET", "test-jwt-secret-at-least-32-characters-long")
@@ -23,9 +24,9 @@ from sqlmodel import SQLModel
 import app.models  # noqa: F401
 from app.models.payment import PaymentIntent
 from app.models.user import User
-from app.models.whatsapp import WhatsAppLink, WhatsAppSetupToken
+from app.models.whatsapp import WhatsAppLink, WhatsAppSession, WhatsAppSetupToken
 from app.routers.auth import create_jwt_token
-from app.routers.whatsapp import _send_whatsapp
+from app.routers.whatsapp import _build_inbound_reply, _send_whatsapp
 from app.services.whatsapp_linking import _graph_phone_cache
 from core.config import settings
 from core.session import get_session
@@ -117,6 +118,86 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
             memo="lunch",
         )
 
+    async def test_rate_replies_and_awaiting_amount_session(self) -> None:
+        async with self.session_factory() as db:
+            db.add(
+                WhatsAppSession(
+                    phone_e164="+2348012345678",
+                    state="awaiting_amount",
+                    draft_memo="lunch",
+                )
+            )
+            await db.commit()
+            with patch(
+                "app.routers.whatsapp.get_rates",
+                new=AsyncMock(
+                    return_value={
+                        "usdc": Decimal("1602"),
+                        "sol": Decimal("240000"),
+                    }
+                ),
+            ) as get_rates:
+                plain = await _build_inbound_reply(db, "2348012345678", "rate")
+                conversion = await _build_inbound_reply(
+                    db, "2348012345678", "5000 in usdc"
+                )
+
+        self.assertIn("*1 USDC ≈ ₦1,602*", plain)
+        self.assertIn("*1 SOL ≈ ₦240,000*", plain)
+        self.assertIn("*₦5,000 ≈ 3.12 USDC*", conversion)
+        self.assertIn("Rate: 1 USDC = ₦1,602", conversion)
+        self.assertNotIn("Please send an amount", conversion)
+        self.assertEqual(get_rates.await_count, 2)
+
+    async def test_rate_lookup_failure_returns_friendly_reply(self) -> None:
+        async with self.session_factory() as db:
+            with patch(
+                "app.routers.whatsapp.get_rates",
+                new=AsyncMock(side_effect=RuntimeError("rate provider unavailable")),
+            ):
+                reply = await _build_inbound_reply(db, "2348012345678", "rate")
+
+        self.assertEqual(
+            reply,
+            "Live rates are unavailable right now. Please try again shortly.",
+        )
+
+    async def test_daily_summary_uses_lagos_day_and_aggregates_statuses(self) -> None:
+        local_now = datetime.now(ZoneInfo("Africa/Lagos"))
+        local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        utc_start = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+        today = utc_start + timedelta(hours=12)
+        yesterday = utc_start - timedelta(seconds=1)
+        payments = (
+            ("funded", "1000", today),
+            ("claimed", "2500", today),
+            ("created", "1200", today),
+            ("funded", "9000", yesterday),
+        )
+        async with self.session_factory() as db:
+            for index, (status, amount, created_at) in enumerate(payments):
+                db.add(
+                    PaymentIntent(
+                        user_id=self.user.id,
+                        merchant_ref=f"SUMMARY-{index}",
+                        mint=settings.USDC_MINT,
+                        amount_atomic="1000000",
+                        amount_ngn=amount,
+                        recipient_address=self.user.address,
+                        status=status,
+                        created_at=created_at,
+                    )
+                )
+            await db.commit()
+            reply = await _build_inbound_reply(db, "2348012345678", "today")
+
+        self.assertIn("*Today's summary*", reply)
+        self.assertIn("*Paid:* ₦3,500 (2 payments)", reply)
+        self.assertIn("*Pending:* 1 links (₦1,200)", reply)
+        self.assertIn("Links created today: 3", reply)
+        self.assertNotIn("₦9,000", reply)
+        self.assertIn(f"{settings.FRONTEND_URL.rstrip('/')}/payments", reply)
+
     def test_meta_webhook_verification_returns_plain_text_challenge(self) -> None:
         with patch.object(settings, "WHATSAPP_VERIFY_TOKEN", "test-verify-token"):
             response = self.client.get(
@@ -171,7 +252,7 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
             patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
-            patch("app.routers.whatsapp.httpx.AsyncClient") as async_client,
+            patch("app.services.whatsapp_client.httpx.AsyncClient") as async_client,
         ):
             post = AsyncMock(
                 return_value=httpx.Response(
@@ -205,7 +286,7 @@ class WhatsAppWebhookTests(unittest.IsolatedAsyncioTestCase):
         with (
             patch.object(settings, "WHATSAPP_ACCESS_TOKEN", "test-access-token"),
             patch.object(settings, "WHATSAPP_PHONE_NUMBER_ID", "123456789"),
-            patch("app.routers.whatsapp.httpx.AsyncClient") as async_client,
+            patch("app.services.whatsapp_client.httpx.AsyncClient") as async_client,
         ):
             post = AsyncMock(
                 return_value=httpx.Response(

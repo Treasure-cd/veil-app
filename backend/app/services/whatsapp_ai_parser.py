@@ -70,6 +70,9 @@ def _fallback_message() -> ParsedMessage:
         "amount_error": None,
         "receive_mode": None,
         "crypto_only": False,
+        "rate_amount": None,
+        "rate_currency": "USDC",
+        "rate_amount_is_token": False,
     }
 
 
@@ -107,6 +110,9 @@ def _to_parsed_message(parsed: GeminiWhatsAppParse) -> ParsedMessage:
         "amount_error": amount_error,
         "receive_mode": parsed.receive_mode,
         "crypto_only": bool(parsed.crypto_only),
+        "rate_amount": None,
+        "rate_currency": "USDC",
+        "rate_amount_is_token": False,
     }
 
 

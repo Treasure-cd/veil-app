@@ -16,13 +16,24 @@ FILLER_WORDS = {
 
 
 class ParsedMessage(TypedDict):
-    intent: Literal["link_code", "menu", "recent_payments", "create_link", "fallback"]
+    intent: Literal[
+        "link_code",
+        "menu",
+        "recent_payments",
+        "daily_summary",
+        "rate",
+        "create_link",
+        "fallback",
+    ]
     code: str | None
     amount_ngn: Decimal | None
     memo: str | None
     amount_error: Literal["too_low", "too_high"] | None
     receive_mode: Literal["private", "public"] | None
     crypto_only: bool
+    rate_amount: Decimal | None
+    rate_currency: Literal["USDC", "SOL"]
+    rate_amount_is_token: bool
 
 
 def _normalized_text(text: str) -> str:
@@ -86,6 +97,65 @@ def _extract_amount_and_memo(text: str) -> tuple[Decimal | None, str | None, str
     return amount, memo, error
 
 
+def _rate_amount(raw_amount: str) -> Decimal:
+    raw_amount = re.sub(r"\s+", "", raw_amount).replace(",", "")
+    multiplier = Decimal(1000) if raw_amount.endswith("k") else Decimal(1)
+    if multiplier == 1000:
+        raw_amount = raw_amount[:-1]
+    return Decimal(raw_amount) * multiplier
+
+
+def _parse_rate_query(
+    text: str,
+) -> tuple[Decimal | None, Literal["USDC", "SOL"], bool] | None:
+    normalized = unicodedata.normalize("NFKC", text).lower().strip()
+    normalized = re.sub(r"(?<=\d),(?=\d)", "", normalized)
+    normalized = re.sub(r"[^\w.\s]", " ", normalized)
+    compact = " ".join(normalized.split())
+    amount = r"(\d[\d,]*(?:\.\d+)?\s*[kK]?)"
+
+    token_to_ngn = re.fullmatch(
+        rf"(?:rate\s+)?{amount}\s*(usdc|sol)\s+(?:in|to)\s+ngn",
+        compact,
+    )
+    if token_to_ngn:
+        currency: Literal["USDC", "SOL"] = (
+            "USDC" if token_to_ngn.group(2) == "usdc" else "SOL"
+        )
+        return (
+            _rate_amount(token_to_ngn.group(1)),
+            currency,
+            True,
+        )
+
+    ngn_to_token = re.fullmatch(
+        rf"(?:rate|rates|exchange rate|conversion)\s+(?:of\s+)?{amount}"
+        rf"(?:\s+(?:in|to)\s+(usdc|sol))?",
+        compact,
+    ) or re.fullmatch(rf"{amount}\s+(?:in|to)\s+(usdc|sol)", compact)
+    if ngn_to_token:
+        token = ngn_to_token.group(2) or "usdc"
+        currency = "USDC" if token == "usdc" else "SOL"
+        return (
+            _rate_amount(ngn_to_token.group(1)),
+            currency,
+            False,
+        )
+
+    if compact in {
+        "rate",
+        "rates",
+        "exchange rate",
+        "exchange rates",
+        "conversion",
+        "usdc rate",
+        "sol rate",
+    }:
+        currency: Literal["USDC", "SOL"] = "SOL" if compact == "sol rate" else "USDC"
+        return None, currency, False
+    return None
+
+
 def parse_message(text: str) -> ParsedMessage:
     receive_mode, crypto_only = _payment_options(text)
     code_match = LINK_CODE_PATTERN.fullmatch(text)
@@ -94,11 +164,37 @@ def parse_message(text: str) -> ParsedMessage:
         return {
             "intent": "link_code", "code": code_match.group(1), "amount_ngn": None,
             "memo": None, "amount_error": None, "receive_mode": receive_mode,
-            "crypto_only": crypto_only,
+            "crypto_only": crypto_only, "rate_amount": None, "rate_currency": "USDC",
+            "rate_amount_is_token": False,
         }
 
     normalized = _normalized_text(text)
     compact = " ".join(normalized.split())
+    rate_query = _parse_rate_query(text)
+    if rate_query is not None:
+        rate_amount, rate_currency, rate_amount_is_token = rate_query
+        return {
+            "intent": "rate", "code": None, "amount_ngn": None, "memo": None,
+            "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+            "rate_amount": rate_amount, "rate_currency": rate_currency,
+            "rate_amount_is_token": rate_amount_is_token,
+        }
+
+    daily_summary_phrases = {
+        "today",
+        "summary",
+        "daily",
+        "daily summary",
+        "today s sales",
+        "todays sales",
+    }
+    if compact in daily_summary_phrases:
+        return {
+            "intent": "daily_summary", "code": None, "amount_ngn": None, "memo": None,
+            "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+            "rate_amount": None, "rate_currency": "USDC", "rate_amount_is_token": False,
+        }
+
     phrases = {
         "hi", "hello", "hey", "menu", "help", "how far", "wetin i fit do",
     }
@@ -106,6 +202,7 @@ def parse_message(text: str) -> ParsedMessage:
         return {
             "intent": "menu", "code": None, "amount_ngn": None, "memo": None,
             "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+            "rate_amount": None, "rate_currency": "USDC", "rate_amount_is_token": False,
         }
 
     recent_phrases = {
@@ -115,6 +212,7 @@ def parse_message(text: str) -> ParsedMessage:
         return {
             "intent": "recent_payments", "code": None, "amount_ngn": None, "memo": None,
             "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+            "rate_amount": None, "rate_currency": "USDC", "rate_amount_is_token": False,
         }
 
     amount, memo, amount_error = _extract_amount_and_memo(text)
@@ -127,9 +225,11 @@ def parse_message(text: str) -> ParsedMessage:
         return {
             "intent": "create_link", "code": None, "amount_ngn": amount, "memo": memo,
             "amount_error": amount_error, "receive_mode": receive_mode,
-            "crypto_only": crypto_only,
+            "crypto_only": crypto_only, "rate_amount": None, "rate_currency": "USDC",
+            "rate_amount_is_token": False,
         }
     return {
         "intent": "fallback", "code": None, "amount_ngn": None, "memo": None,
         "amount_error": None, "receive_mode": receive_mode, "crypto_only": crypto_only,
+        "rate_amount": None, "rate_currency": "USDC", "rate_amount_is_token": False,
     }

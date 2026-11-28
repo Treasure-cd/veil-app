@@ -10,8 +10,9 @@ from sqlmodel import select
 from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppSession
 from app.routers.dependencies import get_current_user, get_optional_user
-from app.routers.whatsapp import MENU, _send_whatsapp
+from app.routers.whatsapp import MENU
 from app.services.phone_numbers import normalize_phone_number
+from app.services.whatsapp_client import send_whatsapp as _send_whatsapp
 from app.services.whatsapp_demo import check_rate_limit, create_demo_link, ensure_demo_enabled
 from app.services.whatsapp_linking import (
     consume_setup_token,

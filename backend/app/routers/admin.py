@@ -41,6 +41,7 @@ from app.services.trace import (
     compute_flow_assessment,
     record_trace_event,
 )
+from app.services.whatsapp_notifications import notify_merchant_payment_received
 from core.config import settings
 from core.session import get_session
 
@@ -686,6 +687,7 @@ async def admin_verify_signature_recovery(
             },
         )
         await db.commit()
+        await notify_merchant_payment_received(db, intent)
         applied = True
 
     return {

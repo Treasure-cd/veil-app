@@ -3,10 +3,10 @@ import hmac
 import json
 import re
 from datetime import datetime, timedelta, timezone
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from uuid import UUID
+from zoneinfo import ZoneInfo
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import PlainTextResponse, Response
 from loguru import logger
@@ -19,19 +19,22 @@ from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppMessage, WhatsAppSession
 from app.services.payment_intents import create_payment_intent
 from app.services.phone_numbers import normalize_phone_number
+from app.services.rates import get_rates
 from app.services.whatsapp_ai_parser import parse_message_with_gemini
 from app.services.whatsapp_linking import consume_link_code, create_setup_token
-from app.services.whatsapp_parser import parse_message
+from app.services.whatsapp_client import (
+    format_ngn as _format_ngn,
+    send_whatsapp as _send_whatsapp,
+)
+from app.services.whatsapp_parser import ParsedMessage, parse_message
 from core.config import settings
 from core.session import get_session
 
 router = APIRouter(prefix="/whatsapp", tags=["whatsapp"])
 
-GRAPH_API_VERSION = "v26.0"
-
 MENU = (
     "I can help with payments. Try: `link 5000 for lunch`, `link 5000 private`, "
-    "`link 5000 crypto only`, `recent`, or `help`."
+    "`link 5000 crypto only`, `recent`, `rate`, `today`, or `help`."
 )
 APOLOGY = "Sorry, Veil couldn't process that just now. Please try again shortly."
 
@@ -57,33 +60,6 @@ async def verify_whatsapp_webhook(
     ):
         return Response(status_code=403)
     return PlainTextResponse(content=hub_challenge)
-
-
-async def _send_whatsapp(to_number: str, body: str) -> None:
-    if not settings.WHATSAPP_ACCESS_TOKEN or not settings.WHATSAPP_PHONE_NUMBER_ID:
-        raise RuntimeError("Meta WhatsApp Cloud API credentials are not configured")
-
-    url = f"https://graph.facebook.com/{GRAPH_API_VERSION}/{settings.WHATSAPP_PHONE_NUMBER_ID}/messages"
-    headers = {
-        "Authorization": f"Bearer {settings.WHATSAPP_ACCESS_TOKEN}",
-        "Content-Type": "application/json",
-    }
-    payload = {
-        "messaging_product": "whatsapp",
-        "to": to_number.lstrip("+"),
-        "type": "text",
-        "text": {"body": body},
-    }
-    async with httpx.AsyncClient(timeout=15.0) as client:
-        resp = await client.post(url, headers=headers, json=payload)
-        resp.raise_for_status()
-        logger.info("Sent WhatsApp reply to {}", to_number)
-
-
-def _format_ngn(value: Decimal | str | None) -> str:
-    amount = Decimal(str(value or 0))
-    rounded = amount.quantize(Decimal("1")) if amount == amount.to_integral() else amount.normalize()
-    return f"₦{rounded:,.2f}" if rounded != rounded.to_integral() else f"₦{rounded:,.0f}"
 
 
 def _time_ago(value: datetime) -> str:
@@ -126,6 +102,73 @@ async def _recent_payments(db: AsyncSession, merchant_id: UUID) -> str:
         lines.append(f"{_format_ngn(amount)} · {label} · {payment.status} · {_time_ago(payment.created_at)}")
     lines.append(f"Paid total: {_format_ngn(paid_total)}")
     return "Recent payments:\n" + "\n".join(lines)
+
+
+def _format_token_amount(value: Decimal) -> str:
+    rounded = value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+    return f"{rounded:,.2f}".rstrip("0").rstrip(".")
+
+
+async def _live_rate_reply(parsed: ParsedMessage) -> str:
+    try:
+        rates = await get_rates()
+        currency = parsed["rate_currency"].lower()
+        rate = Decimal(str(rates[currency]))
+        if rate <= 0:
+            raise ValueError(f"Invalid {currency} rate")
+
+        amount = parsed["rate_amount"]
+        if amount is None:
+            return (
+                "*Live exchange rates*\n"
+                f"*1 USDC ≈ {_format_ngn(rates['usdc'])}*\n"
+                f"*1 SOL ≈ {_format_ngn(rates['sol'])}*"
+            )
+
+        if parsed["rate_amount_is_token"]:
+            converted_ngn = amount * rate
+            conversion = f"{_format_token_amount(amount)} {parsed['rate_currency']} ≈ {_format_ngn(converted_ngn)}"
+        else:
+            converted_token = amount / rate
+            conversion = f"{_format_ngn(amount)} ≈ {_format_token_amount(converted_token)} {parsed['rate_currency']}"
+        return (
+            f"*Conversion*\n*{conversion}*\n"
+            f"Rate: 1 {parsed['rate_currency']} = {_format_ngn(rate)}"
+        )
+    except Exception:
+        logger.exception("WhatsApp live rate lookup failed")
+        return "Live rates are unavailable right now. Please try again shortly."
+
+
+async def _daily_summary(db: AsyncSession, merchant_id: UUID) -> str:
+    local_now = datetime.now(ZoneInfo("Africa/Lagos"))
+    local_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+    start_utc = local_start.astimezone(timezone.utc).replace(tzinfo=None)
+    end_utc = (local_start + timedelta(days=1)).astimezone(timezone.utc).replace(tzinfo=None)
+    rows = (
+        await db.execute(
+            select(PaymentIntent).where(
+                PaymentIntent.user_id == merchant_id,
+                PaymentIntent.created_at >= start_utc,
+                PaymentIntent.created_at < end_utc,
+            )
+        )
+    ).scalars().all()
+    if not rows:
+        return "No payment links yet today. Send `link 5000 for lunch` to create one."
+
+    paid = [row for row in rows if row.status in ("funded", "claimed")]
+    pending = [row for row in rows if row.status == "created"]
+    paid_total = sum((Decimal(row.amount_ngn or "0") for row in paid), Decimal(0))
+    pending_total = sum((Decimal(row.amount_ngn or "0") for row in pending), Decimal(0))
+    dashboard_url = f"{settings.FRONTEND_URL.rstrip('/')}/payments"
+    return (
+        "*Today's summary*\n"
+        f"*Paid:* {_format_ngn(paid_total)} ({len(paid)} payments)\n"
+        f"*Pending:* {len(pending)} links ({_format_ngn(pending_total)})\n"
+        f"Links created today: {len(rows)}\n"
+        f"Dashboard: {dashboard_url}"
+    )
 
 
 async def _build_inbound_reply(
@@ -217,6 +260,10 @@ async def _build_inbound_reply(
             return MENU
         if parsed["intent"] == "recent_payments":
             return await _recent_payments(db, user.id)
+        if parsed["intent"] == "rate":
+            return await _live_rate_reply(parsed)
+        if parsed["intent"] == "daily_summary":
+            return await _daily_summary(db, user.id)
         if parsed["intent"] == "fallback" and not awaiting_amount:
             return f"I'm here to help with payments. {MENU}"
 

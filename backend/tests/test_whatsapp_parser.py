@@ -15,6 +15,33 @@ class WhatsAppParserTests(unittest.TestCase):
     def test_pidgin_recent_payments(self):
         self.assertEqual(parse_message("wetin I don collect")["intent"], "recent_payments")
 
+    def test_rate_queries_and_conversions(self):
+        for message in ("rate", "rates", "exchange rate", "usdc rate"):
+            with self.subTest(message=message):
+                self.assertEqual(parse_message(message)["intent"], "rate")
+
+        conversion = parse_message("5000 in usdc")
+        self.assertEqual(conversion["intent"], "rate")
+        self.assertEqual(conversion["rate_amount"], Decimal("5000"))
+        self.assertEqual(conversion["rate_currency"], "USDC")
+        self.assertFalse(conversion["rate_amount_is_token"])
+
+        query = parse_message("rate 5k")
+        self.assertEqual(query["intent"], "rate")
+        self.assertEqual(query["rate_amount"], Decimal("5000"))
+
+        token_conversion = parse_message("10 usdc in ngn")
+        self.assertEqual(token_conversion["intent"], "rate")
+        self.assertEqual(token_conversion["rate_amount"], Decimal("10"))
+        self.assertTrue(token_conversion["rate_amount_is_token"])
+
+    def test_daily_summary_queries_do_not_become_link_requests(self):
+        for message in ("today", "summary", "daily", "daily summary", "today's sales"):
+            with self.subTest(message=message):
+                self.assertEqual(parse_message(message)["intent"], "daily_summary")
+
+        self.assertEqual(parse_message("link 5000 for lunch")["intent"], "create_link")
+
     def test_pidgin_greeting(self):
         self.assertEqual(parse_message("how far")["intent"], "menu")
 
