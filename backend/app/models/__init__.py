@@ -10,4 +10,11 @@ from .payment import (
     PaymentTraceEvent,
 )
 from .payroll import PayrollGroup, PayrollLink
-from .whatsapp import WhatsAppLink, WhatsAppSession, WhatsAppMessage, WhatsAppLinkCode, WhatsAppSetupToken
+from .whatsapp import (
+    WhatsAppAuthChallenge,
+    WhatsAppLink,
+    WhatsAppLinkCode,
+    WhatsAppMessage,
+    WhatsAppSession,
+    WhatsAppSetupToken,
+)

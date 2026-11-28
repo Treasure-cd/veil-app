@@ -14,7 +14,7 @@ from sqlalchemy import text
 from core.config import settings
 from app import models
 from core.session import engine
-from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin
+from app.routers import webhook, auth, payments, payroll, dashboard, rates, whatsapp, whatsapp_accounts, admin, settings as settings_router
 from app.services.trace import SEED_ADMIN_ADDRESSES
 
 
@@ -50,13 +50,7 @@ async def _ensure_postgres_schema() -> None:
             text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE')
         )
         await conn.execute(
-            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR')
-        )
-        await conn.execute(
-            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS password_hash VARCHAR')
-        )
-        await conn.execute(
-            text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_email ON "user" (email) WHERE email IS NOT NULL')
+            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS default_settlement_target VARCHAR')
         )
         await conn.execute(
             text("ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS paid_via VARCHAR")
@@ -80,6 +74,30 @@ async def _ensure_postgres_schema() -> None:
             text(
                 "CREATE INDEX IF NOT EXISTS ix_whatsapp_setup_tokens_phone_e164 "
                 "ON whatsapp_setup_tokens (phone_e164)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE TABLE IF NOT EXISTS whatsapp_auth_challenges ("
+                "token VARCHAR(64) PRIMARY KEY, "
+                "code VARCHAR(12) NOT NULL UNIQUE, "
+                "phone_e164 VARCHAR, "
+                'user_id UUID REFERENCES "user"(id), '
+                "expires_at TIMESTAMPTZ NOT NULL, "
+                "verified_at TIMESTAMPTZ, "
+                "consumed_at TIMESTAMPTZ)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_whatsapp_auth_challenges_phone_e164 "
+                "ON whatsapp_auth_challenges (phone_e164)"
+            )
+        )
+        await conn.execute(
+            text(
+                "CREATE INDEX IF NOT EXISTS ix_whatsapp_auth_challenges_user_id "
+                "ON whatsapp_auth_challenges (user_id)"
             )
         )
         await conn.execute(
@@ -185,6 +203,7 @@ app.include_router(rates.router, prefix="/v1")
 app.include_router(whatsapp.router, prefix="/v1")
 app.include_router(whatsapp_accounts.router, prefix="/v1")
 app.include_router(admin.router, prefix="/v1")
+app.include_router(settings_router.router, prefix="/v1")
 
 @app.get("/")
 async def root():

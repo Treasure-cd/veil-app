@@ -14,14 +14,20 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.models.payment import PaymentIntent
+from app.models.payment import MerchantBankAccount, PaymentIntent, SettlementTarget
 from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppMessage, WhatsAppSession
 from app.services.payment_intents import create_payment_intent
 from app.services.phone_numbers import normalize_phone_number
 from app.services.rates import get_rates
 from app.services.whatsapp_ai_parser import parse_message_with_gemini
-from app.services.whatsapp_linking import consume_link_code, create_setup_token
+from app.services.whatsapp_linking import (
+    consume_link_code,
+    create_setup_token,
+    mask_phone,
+    verify_whatsapp_auth_challenge,
+)
+from app.routers.settings import effective_settlement_target
 from app.services.whatsapp_client import (
     format_ngn as _format_ngn,
     send_whatsapp as _send_whatsapp,
@@ -199,6 +205,23 @@ async def _build_inbound_reply(
                 return "That link code has already been used. Generate a new code in Veil Settings → WhatsApp."
             return "That link code is not valid. Check the code and try again."
 
+        if parsed["intent"] == "login_code":
+            result, signed_in_user = await verify_whatsapp_auth_challenge(
+                db,
+                code_value=parsed["code"] or "",
+                phone_e164=phone,
+            )
+            if result == "verified" and signed_in_user is not None:
+                return (
+                    f"You're signed in to Veil ({mask_phone(phone)}). "
+                    f"Return to your browser to continue. {MENU}"
+                )
+            if result == "expired":
+                return "That sign-in code has expired. Request a new code on the Veil sign-in screen."
+            if result == "used":
+                return "That sign-in code has already been used. Request a new code on the Veil sign-in screen."
+            return "That sign-in code is not valid. Check the code and try again."
+
         linked = (await db.execute(
             select(WhatsAppLink).where(WhatsAppLink.phone_e164 == phone)
         )).scalars().first()
@@ -294,18 +317,50 @@ async def _build_inbound_reply(
         if parsed["amount_error"] == "too_high":
             return "The maximum request is ₦10,000,000. Please send a lower amount."
 
-        receive_mode = parsed["receive_mode"] or (
-            "private" if settings.WHATSAPP_PRIVATE_PAYMENTS else "public"
+        is_non_wallet_user = user.address.startswith("whatsapp:")
+        settlement_target = (
+            SettlementTarget.CRYPTO.value
+            if parsed["crypto_only"]
+            else effective_settlement_target(user)
         )
-        allow_fiat_checkout = (
-            "fossapay" in settings.whatsapp_payment_methods
-            and not parsed["crypto_only"]
-            and receive_mode != "private"
-        )
+        bank_account = None
+        if settlement_target == "fiat":
+            bank_account = (await db.execute(
+                select(MerchantBankAccount)
+                .where(MerchantBankAccount.user_id == user.id)
+                .order_by(MerchantBankAccount.is_default.desc(), MerchantBankAccount.created_at.desc())
+                .limit(1)
+            )).scalars().first()
+            if not bank_account:
+                setup_bank_url = f"{settings.FRONTEND_URL.rstrip('/')}/settings#fiat-account-settings"
+                return (
+                    "Add a Nigerian bank account in Veil Settings first so your payments settle directly to NGN:\n"
+                    f"{setup_bank_url}"
+                )
+            receive_mode = "public"
+            settlement_target = "fiat"
+            recipient_address = bank_account.solana_address
+            bank_account_id = bank_account.id
+            allow_fiat_checkout = (
+                "fossapay" in settings.whatsapp_payment_methods
+                and not parsed["crypto_only"]
+            )
+        else:
+            receive_mode = parsed["receive_mode"] or (
+                "private" if settings.WHATSAPP_PRIVATE_PAYMENTS else "public"
+            )
+            allow_fiat_checkout = (
+                "fossapay" in settings.whatsapp_payment_methods
+                and not parsed["crypto_only"]
+                and receive_mode != "private"
+            )
+            recipient_address = user.address
+            bank_account_id = None
+
         intent = await create_payment_intent(
             db=db,
             user_id=user.id,
-            recipient_address=user.address,
+            recipient_address=recipient_address,
             amount_ngn=parsed["amount_ngn"],
             merchant_ref=(parsed["memo"] or "WhatsApp payment")[:120],
             token="USDC",
@@ -313,6 +368,8 @@ async def _build_inbound_reply(
             source="whatsapp",
             receive_mode=receive_mode,
             allow_fiat_checkout=allow_fiat_checkout,
+            settlement_target=settlement_target,
+            bank_account_id=bank_account_id,
         )
         if session:
             await db.delete(session)
@@ -320,7 +377,13 @@ async def _build_inbound_reply(
 
         token, token_amount = _token_details(intent)
         checkout_url = f"{settings.FRONTEND_URL.rstrip('/')}/pay/{intent.id}"
-        if receive_mode == "private":
+        if is_non_wallet_user:
+            payment_options = (
+                "crypto or bank transfer (settles to NGN)"
+                if allow_fiat_checkout
+                else "crypto only (settles to NGN)"
+            )
+        elif receive_mode == "private":
             payment_options = "private USDC only"
         elif allow_fiat_checkout:
             payment_options = "USDC or bank transfer"

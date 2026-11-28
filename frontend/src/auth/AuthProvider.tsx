@@ -9,9 +9,9 @@ import {
 } from 'react'
 import { useWallet } from '@solana/wallet-adapter-react'
 import { configureApi, ApiError } from '../services/api'
-import { buildLoginMessage, encodeSignature, fetchMe, login, loginEmail, registerEmail, requestChallenge } from './auth.api'
+import { buildLoginMessage, encodeSignature, fetchMe, login, requestChallenge } from './auth.api'
 import { clearSession, getTokenExpiry, loadSession, saveSession } from './auth.storage'
-import type { Session, SignInStep } from './auth.types'
+import type { AuthTab, LoginResponse, Session, SignInStep } from './auth.types'
 import { AuthContext, type AuthContextValue } from './useAuth.ts'
 
 const MAX_TIMEOUT = 2 ** 31 - 1
@@ -25,9 +25,14 @@ function toMessage(e: unknown): string {
   return 'Something went wrong. Please try again.'
 }
 
-/** Returns true if the user logged in via email (placeholder address). */
-function isEmailUser(session: Session | null): boolean {
-  return Boolean(session?.user.address?.startsWith('email:'))
+/** Returns true if the account has no connected Solana wallet (WhatsApp identity). */
+function isNonWalletSession(session: Session | null): boolean {
+  if (!session) return false
+  return (
+    session.authMethod === 'whatsapp' ||
+    session.user.hasWallet === false ||
+    Boolean(session.user.address?.startsWith('whatsapp:'))
+  )
 }
 
 export function AuthProvider({ children }: { children: ReactNode }) {
@@ -37,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [step, setStep] = useState<SignInStep>('idle')
   const [error, setError] = useState<string | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authModalTab, setAuthModalTab] = useState<AuthTab>('wallet')
   const sessionRef = useRef<Session | null>(session)
   const lastConnectedAddressRef = useRef<string | null>(publicKey?.toBase58() ?? null)
 
@@ -83,8 +89,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         if (cancelled) return
         const latest = sessionRef.current
         if (!latest || latest.token !== token) return
-        if (latest.user.isAdmin !== freshUser.isAdmin || latest.user.updatedAt !== freshUser.updatedAt) {
-          applySession({ token: latest.token, user: freshUser })
+        if (
+          latest.user.isAdmin !== freshUser.isAdmin ||
+          latest.user.updatedAt !== freshUser.updatedAt ||
+          latest.user.phoneMasked !== freshUser.phoneMasked ||
+          latest.user.hasWallet !== freshUser.hasWallet
+        ) {
+          applySession({ ...latest, user: freshUser })
         }
       })
       .catch(() => {
@@ -98,9 +109,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // On reload, there may be no public key until the wallet adapter restores its connection.
   // Keep the persisted session during that gap, but clear it if an active wallet disconnects
   // or changes to an address that does not own this session.
-  // For email users, skip wallet-binding logic entirely.
+  // For WhatsApp sessions / non-wallet accounts, skip wallet-binding logic.
   useEffect(() => {
-    if (connecting || isEmailUser(session)) return
+    if (connecting || isNonWalletSession(session)) return
 
     const address = publicKey?.toBase58() ?? null
     if (address) lastConnectedAddressRef.current = address
@@ -134,7 +145,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setStep('verifying')
       const res = await login({ address, signature: encodeSignature(signature), message })
 
-      applySession({ token: res.token, user: res.user })
+      applySession({ token: res.token, user: res.user, authMethod: 'wallet' })
       setAuthModalOpen(false)
     } catch (e) {
       setError(toMessage(e))
@@ -143,21 +154,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
   }, [publicKey, signMessage, applySession])
 
-  const signInWithEmail = useCallback(async (email: string, password: string, isRegister: boolean) => {
-    setError(null)
-    try {
-      setStep('verifying')
-      const res = isRegister
-        ? await registerEmail(email, password)
-        : await loginEmail(email, password)
-      applySession({ token: res.token, user: res.user })
+  const completeWhatsAppSignIn = useCallback(
+    (res: LoginResponse) => {
+      applySession({ token: res.token, user: res.user, authMethod: 'whatsapp' })
+      setError(null)
       setAuthModalOpen(false)
-    } catch (e) {
-      setError(toMessage(e))
-    } finally {
-      setStep('idle')
-    }
-  }, [applySession])
+    },
+    [applySession],
+  )
 
   const signOut = useCallback(() => applySession(null), [applySession])
   const disconnectWallet = useCallback(async () => {
@@ -170,7 +174,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError('Veil signed out, but your wallet could not be disconnected. Try again in your wallet.')
     }
   }, [applySession, disconnect])
-  const openAuthModal = useCallback(() => setAuthModalOpen(true), [])
+  const openAuthModal = useCallback((tab: AuthTab = 'wallet') => {
+    setAuthModalTab(tab)
+    setAuthModalOpen(true)
+  }, [])
   const closeAuthModal = useCallback(() => setAuthModalOpen(false), [])
   const clearError = useCallback(() => setError(null), [])
 
@@ -181,15 +188,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       step,
       error,
       authModalOpen,
+      authModalTab,
       signIn,
-      signInWithEmail,
+      completeWhatsAppSignIn,
       signOut,
       disconnectWallet,
       openAuthModal,
       closeAuthModal,
       clearError,
     }),
-    [session, step, error, authModalOpen, signIn, signInWithEmail, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
+    [session, step, error, authModalOpen, authModalTab, signIn, completeWhatsAppSignIn, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

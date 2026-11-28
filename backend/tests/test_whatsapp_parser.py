@@ -74,6 +74,13 @@ class WhatsAppParserTests(unittest.TestCase):
         self.assertEqual(parsed["intent"], "link_code")
         self.assertEqual(parsed["code"], "AbC_123")
 
+    def test_login_code(self):
+        for msg in ("login AbC123", "signin AbC123", "verify AbC123"):
+            with self.subTest(msg=msg):
+                parsed = parse_message(msg)
+                self.assertEqual(parsed["intent"], "login_code")
+                self.assertEqual(parsed["code"], "AbC123")
+
     def test_invalid_amount_edges(self):
         self.assertIsNone(parse_message("k")["amount_ngn"])
         self.assertEqual(parse_message("0")["amount_error"], "too_low")

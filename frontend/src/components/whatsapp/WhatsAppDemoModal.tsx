@@ -23,7 +23,10 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
   const [error, setError] = useState<string | null>(null)
   const [result, setResult] = useState<DemoLinkResponse | null>(null)
   const [resultWalletAddress, setResultWalletAddress] = useState<string | null>(null)
-  const walletLinked = status === 'authenticated' && Boolean(user?.address)
+  const walletLinked =
+    status === 'authenticated' &&
+    user?.hasWallet !== false &&
+    Boolean(user?.address && !user.address.startsWith('whatsapp:'))
 
   useEffect(() => {
     const dialog = dialogRef.current
@@ -180,7 +183,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                 )}
               </div>
               {!walletLinked && (
-                <Button type="button" className="mt-3" fullWidth onClick={openAuthModal}>
+                <Button type="button" className="mt-3" fullWidth onClick={() => openAuthModal()}>
                   Connect wallet (optional)
                 </Button>
               )}

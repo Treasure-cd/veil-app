@@ -40,7 +40,7 @@ export function loadSession(): Session | null {
     const raw = localStorage.getItem(KEY)
     if (!raw) return null
     const session = JSON.parse(raw) as Session
-    if (!session?.token || (!session?.user?.address && !session?.user?.email) || isExpired(session.token)) {
+    if (!session?.token || !session?.user?.address || isExpired(session.token)) {
       clearSession()
       return null
     }

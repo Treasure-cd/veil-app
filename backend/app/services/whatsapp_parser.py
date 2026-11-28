@@ -9,6 +9,7 @@ MIN_AMOUNT_NGN = Decimal("100")
 MAX_AMOUNT_NGN = Decimal("10000000")
 AMOUNT_PATTERN = re.compile(r"(?<![\w.])₦?\s*(\d[\d,]*(?:\.\d+)?\s*[kK]?)(?!\w)")
 LINK_CODE_PATTERN = re.compile(r"^\s*link\s+([A-Za-z0-9_-]+)\s*$", re.IGNORECASE)
+LOGIN_CODE_PATTERN = re.compile(r"^\s*(?:login|signin|sign\s+in|verify)\s+([A-Za-z0-9_-]+)\s*$", re.IGNORECASE)
 FILLER_WORDS = {
     "abeg", "make", "i", "me", "collect", "get", "create", "a", "the", "link",
     "request", "for", "naira", "ngn", "please", "pls", "can", "you", "to", "of",
@@ -18,6 +19,7 @@ FILLER_WORDS = {
 class ParsedMessage(TypedDict):
     intent: Literal[
         "link_code",
+        "login_code",
         "menu",
         "recent_payments",
         "daily_summary",
@@ -163,6 +165,16 @@ def parse_message(text: str) -> ParsedMessage:
     if code_match and not code_is_amount:
         return {
             "intent": "link_code", "code": code_match.group(1), "amount_ngn": None,
+            "memo": None, "amount_error": None, "receive_mode": receive_mode,
+            "crypto_only": crypto_only, "rate_amount": None, "rate_currency": "USDC",
+            "rate_amount_is_token": False,
+        }
+
+    login_match = LOGIN_CODE_PATTERN.fullmatch(text)
+    login_is_amount = bool(login_match and AMOUNT_PATTERN.fullmatch(login_match.group(1)))
+    if login_match and not login_is_amount:
+        return {
+            "intent": "login_code", "code": login_match.group(1), "amount_ngn": None,
             "memo": None, "amount_error": None, "receive_mode": receive_mode,
             "crypto_only": crypto_only, "rate_amount": None, "rate_currency": "USDC",
             "rate_amount_is_token": False,
