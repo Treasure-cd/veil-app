@@ -26,6 +26,7 @@ class PayrollGroup(SQLModel, table=True):
     updated_at: datetime = Field(default_factory=utc_now_naive)
     vault_signature: Optional[str] = Field(default=None)
     release_signature: Optional[str] = Field(default=None)
+    payout_signatures_json: Optional[str] = Field(default=None)
     failure_reason: Optional[str] = Field(default=None)
     rate_ngn_per_token: Optional[str] = Field(default=None)
 

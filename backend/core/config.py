@@ -28,6 +28,7 @@ class Settings(BaseSettings):
     SOLANA_NETWORK: str = Field(default="mainnet-beta")
     SOLANA_RPC_URL: str = Field(default="")
     USDC_MINT: str = Field(default="")
+    USDT_MINT: str = Field(default="", validation_alias=AliasChoices("USDT_MINT", "SOLANA_USDT_MINT"))
     SOL_MINT: str = Field(default=NATIVE_SOL_MINT)
 
     @model_validator(mode="after")
@@ -58,8 +59,13 @@ class Settings(BaseSettings):
     @property
     def known_usdc_mints(self) -> tuple[str, ...]:
         return tuple(dict.fromkeys((self.USDC_MINT, MAINNET_USDC_MINT, DEVNET_USDC_MINT)))
+
+    @property
+    def known_usdt_mints(self) -> tuple[str, ...]:
+        return (self.USDT_MINT,) if self.USDT_MINT else ()
     RATE_NGN_PER_SOL: float | None = Field(default=None)
     RATE_NGN_PER_USDC: float | None = Field(default=None)
+    RATE_NGN_PER_USDT: float | None = Field(default=None)
     
     ALLOWED_ORIGINS: str = Field(default="http://localhost:5173")
     

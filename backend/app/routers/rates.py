@@ -11,5 +11,6 @@ async def rates():
     return {
         "sol": str(result["sol"]),
         "usdc": str(result["usdc"]),
+        "usdt": str(result["usdt"]),
         "asOf": result["asOf"].isoformat().replace("+00:00", "Z"),
     }

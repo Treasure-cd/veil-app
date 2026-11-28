@@ -46,7 +46,7 @@ class AddRecipientRequest(BaseModel):
 class CreatePayrollGroupRequest(BaseModel):
     employerRef: str
     title: str
-    token: str = "SOL"
+    token: str = "USDC"
     releaseAt: str
     confirmationWindowHours: int = 2
     autoProceedAfterConfirmationWindow: bool = True
@@ -58,6 +58,7 @@ class LockVaultRequest(BaseModel):
 
 class ReleasePayrollRequest(BaseModel):
     releaseSignature: str
+    payoutSignatures: List[str] = Field(default_factory=list)
 
 class SubmitDetailsRequest(BaseModel):
     name: str
@@ -159,10 +160,11 @@ def format_group(group: PayrollGroup) -> dict:
 async def format_group_with_estimate(group: PayrollGroup) -> dict:
     data = format_group(group)
     if group.rate_ngn_per_token:
-        data["estimatedTotalSol"] = format(Decimal(data["totalAmountAtomic"]) / Decimal(10**9), "f")
+        decimals = 6 if group.token in {"USDC", "USDT"} else 9
+        data["estimatedTotalToken"] = format(Decimal(data["totalAmountAtomic"]) / Decimal(10**decimals), "f")
     else:
-        rate = (await get_rates())["sol"]
-        data["estimatedTotalSol"] = format(Decimal(data["totalAmountNgn"]) / rate, "f")
+        rate = (await get_rates())[group.token.lower() if group.token in {"USDC", "USDT"} else "sol"]
+        data["estimatedTotalToken"] = format(Decimal(data["totalAmountNgn"]) / rate, "f")
     return data
 
 # --- Routes ---
@@ -172,6 +174,9 @@ async def create_group(
     current_user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_session)
 ):
+    token = req.token.upper()
+    if token not in {"USDC", "USDT"}:
+        raise HTTPException(status_code=400, detail="Payroll supports USDC and USDT")
     now_str = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
     recipients_list = []
     if req.recipients:
@@ -202,7 +207,7 @@ async def create_group(
         user_id=current_user.id,
         employer_ref=req.employerRef,
         title=req.title,
-        token="SOL",
+        token=token,
         # 3. Use the naive variables we just created
         release_at=release_at_naive,
         confirmation_window_hours=req.confirmationWindowHours,
@@ -398,7 +403,11 @@ async def lock_vault(
         raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
     rates = await get_rates()
-    rate = rates["sol"]
+    if group.token not in {"USDC", "USDT"}:
+        raise HTTPException(status_code=400, detail="Payroll supports USDC and USDT")
+    rate_key = group.token.lower()
+    decimals = 6
+    rate = rates[rate_key]
     try:
         recipients = json.loads(group.recipients_json)
     except Exception:
@@ -410,9 +419,9 @@ async def lock_vault(
         value = Decimal(str(ngn))
         if value <= 0:
             raise HTTPException(status_code=400, detail="Recipient amountNgn must be positive")
-        recipient["amountAtomic"] = str(int((value / rate * Decimal(10**9)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
+        recipient["amountAtomic"] = str(int((value / rate * Decimal(10**decimals)).quantize(Decimal("1"), rounding=ROUND_HALF_UP)))
     group.recipients_json = json.dumps(recipients)
-    group.token = "SOL"
+    group.token = group.token.upper()
     group.rate_ngn_per_token = str(rate)
 
     group.status = "locked"
@@ -432,7 +441,7 @@ async def lock_vault(
         details={
             "vaultSignature": req.vaultSignature,
             "recipientCount": len(recipients),
-            "rateNgnPerSol": str(rate),
+            "rateNgnPerToken": str(rate),
         },
     )
     await db.commit()
@@ -485,12 +494,16 @@ async def release_payroll(
         raise HTTPException(status_code=400, detail="Can only release a locked or scheduled payroll group")
 
     # BLOCKCHAIN VERIFICATION
-    is_valid_tx = await verify_solana_transaction(req.releaseSignature)
-    if not is_valid_tx:
-        raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
+    signatures = [req.releaseSignature, *req.payoutSignatures]
+    if not signatures:
+        raise HTTPException(status_code=400, detail="At least one payout transaction is required.")
+    for signature in signatures:
+        if not await verify_solana_transaction(signature):
+            raise HTTPException(status_code=400, detail="Transaction verification failed on-chain.")
 
     group.status = "released"
     group.release_signature = req.releaseSignature
+    group.payout_signatures_json = json.dumps(req.payoutSignatures)
     group.updated_at = utc_now_naive()
 
     db.add(group)
