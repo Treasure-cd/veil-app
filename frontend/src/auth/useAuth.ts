@@ -8,6 +8,7 @@ export interface AuthContextValue {
   error: string | null
   authModalOpen: boolean
   signIn: () => Promise<void>
+  signInWithEmail: (email: string, password: string, isRegister: boolean) => Promise<void>
   signOut: () => void
   disconnectWallet: () => Promise<void>
   openAuthModal: () => void

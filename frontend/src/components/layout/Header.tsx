@@ -1,4 +1,4 @@
-import { Plus, SignOut } from '@phosphor-icons/react'
+import { Plus, SignOut, EnvelopeSimple } from '@phosphor-icons/react'
 import { useEffect, useRef, useState } from 'react'
 import { useAuth } from '../../auth/useAuth'
 import Logo from '../Logo'
@@ -26,12 +26,19 @@ function NetworkBadge() {
   )
 }
 
+/** Returns true if the user logged in via email (placeholder address). */
+function isEmailUser(address?: string | null): boolean {
+  return Boolean(address?.startsWith('email:'))
+}
+
 export function Header() {
-  const { user, disconnectWallet } = useAuth()
+  const { user, disconnectWallet, signOut } = useAuth()
   const navigate = useNavigate()
   const [walletMenuOpen, setWalletMenuOpen] = useState(false)
   const [disconnecting, setDisconnecting] = useState(false)
   const walletMenuRef = useRef<HTMLDivElement>(null)
+
+  const emailMode = isEmailUser(user?.address)
 
   useEffect(() => {
     if (!walletMenuOpen) return
@@ -53,7 +60,11 @@ export function Header() {
     setDisconnecting(true)
     setWalletMenuOpen(false)
     try {
-      await disconnectWallet()
+      if (emailMode) {
+        signOut()
+      } else {
+        await disconnectWallet()
+      }
     } finally {
       setDisconnecting(false)
     }
@@ -67,7 +78,7 @@ export function Header() {
       <div className="ml-auto flex min-w-0 items-center gap-1 sm:gap-2 md:gap-3">
         <ThemeToggle />
         <MoneyDisplayToggle />
-        <NetworkBadge />
+        {!emailMode && <NetworkBadge />}
         <Button
           size="sm"
           className="hidden sm:inline-flex"
@@ -77,25 +88,41 @@ export function Header() {
         >
           <span className="hidden lg:inline">New request</span>
         </Button>
-        {/* Wallet stays on the far right as the user profile anchor */}
+        {/* User profile anchor */}
         <div className="relative" ref={walletMenuRef}>
-          <ConnectWalletButton
-            size="sm"
-            address={user?.address}
-            aria-haspopup={user ? 'menu' : undefined}
-            aria-expanded={user ? walletMenuOpen : undefined}
-            onClick={user ? () => setWalletMenuOpen((open) => !open) : undefined}
-          />
+          {emailMode ? (
+            <Button
+              variant="secondary"
+              size="sm"
+              className="max-sm:h-8 max-sm:px-2.5 max-sm:text-xs"
+              aria-haspopup="menu"
+              aria-expanded={walletMenuOpen}
+              onClick={() => setWalletMenuOpen((open) => !open)}
+              leftIcon={<EnvelopeSimple size={16} weight="bold" className="hidden sm:inline" />}
+            >
+              <span className="max-w-[12ch] truncate">{user?.email ?? 'Account'}</span>
+            </Button>
+          ) : (
+            <ConnectWalletButton
+              size="sm"
+              address={user?.address}
+              aria-haspopup={user ? 'menu' : undefined}
+              aria-expanded={user ? walletMenuOpen : undefined}
+              onClick={user ? () => setWalletMenuOpen((open) => !open) : undefined}
+            />
+          )}
           {user && walletMenuOpen && (
             <div
               role="menu"
-              aria-label="Wallet options"
+              aria-label="Account options"
               className="absolute right-0 top-[calc(100%+0.65rem)] z-30 w-[min(18rem,calc(100vw-2rem))] overflow-hidden rounded-card border border-primary/10 bg-surface p-2 shadow-veil-lg"
             >
               <div className="px-3 py-2.5">
-                <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">Connected wallet</p>
-                <p className="mt-1 truncate font-mono text-sm text-foreground" title={user.address}>
-                  {user.address}
+                <p className="text-xs font-medium uppercase tracking-wide text-foreground/50">
+                  {emailMode ? 'Email account' : 'Connected wallet'}
+                </p>
+                <p className="mt-1 truncate font-mono text-sm text-foreground" title={emailMode ? user.email ?? '' : user.address}>
+                  {emailMode ? user.email : user.address}
                 </p>
               </div>
               <div className="my-1 h-px bg-primary/10" />
@@ -107,7 +134,7 @@ export function Header() {
                 className="flex min-h-11 w-full items-center gap-2.5 rounded-card px-3 text-left text-sm font-medium text-red-700 transition-colors hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-wait disabled:opacity-60 dark:text-red-400 dark:hover:bg-red-950/40"
               >
                 <SignOut size={18} weight="bold" aria-hidden="true" />
-                {disconnecting ? 'Disconnecting…' : 'Disconnect'}
+                {disconnecting ? 'Signing out…' : emailMode ? 'Sign out' : 'Disconnect'}
               </button>
             </div>
           )}

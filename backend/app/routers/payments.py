@@ -9,7 +9,7 @@ from decimal import Decimal, ROUND_DOWN
 
 import base58
 from fastapi import APIRouter, Body, Depends, HTTPException, Query
-from pydantic import AliasChoices, BaseModel, Field, field_validator
+from pydantic import AliasChoices, BaseModel, Field, field_validator, model_validator
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
@@ -65,14 +65,17 @@ class CreatePaymentIntentRequest(BaseModel):
     includeFiatCheckout: bool = False
     feeBearer: Literal["customer", "merchant"] = "customer"
 
-    @field_validator("recipientAddress")
-    @classmethod
-    def validate_pubkey(cls, v: str):
-        try:
-            Pubkey.from_string(v)
-        except ValueError as exc:
-            raise ValueError("Invalid Solana address") from exc
-        return v
+    @model_validator(mode="after")
+    def validate_recipient(self):
+        # Fiat-settled intents are routed to the linked bank account's Paj
+        # deposit address, so the merchant does not need a crypto wallet and
+        # recipientAddress may be a non-Solana placeholder (e.g. email accounts).
+        if self.settlementTarget == SettlementTarget.CRYPTO.value:
+            try:
+                Pubkey.from_string(self.recipientAddress)
+            except ValueError as exc:
+                raise ValueError("Invalid Solana address") from exc
+        return self
 
     @field_validator("amount_ngn")
     @classmethod

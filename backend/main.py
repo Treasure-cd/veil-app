@@ -30,6 +30,15 @@ async def _ensure_postgres_schema() -> None:
             text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS is_admin BOOLEAN NOT NULL DEFAULT FALSE')
         )
         await conn.execute(
+            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS email VARCHAR')
+        )
+        await conn.execute(
+            text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS password_hash VARCHAR')
+        )
+        await conn.execute(
+            text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_email ON "user" (email) WHERE email IS NOT NULL')
+        )
+        await conn.execute(
             text("ALTER TABLE payment_intents ADD COLUMN IF NOT EXISTS paid_via VARCHAR")
         )
         await conn.execute(

@@ -19,6 +19,9 @@ class User(SQLModel, table=True):
         index=True
     )
 
+    email: Optional[str] = Field(default=None, index=True)
+    password_hash: Optional[str] = Field(default=None)
+
     nonce: Optional[str] = Field(default=None)
 
     nonce_expires_at: Optional[datetime] = Field(

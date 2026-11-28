@@ -104,6 +104,9 @@ const PAJ_MIN_USDC = 0.4
 export default function Payments() {
   const { user } = useAuth()
   const wallet = useWallet()
+  // Traditional (email) accounts have no Solana wallet, so they can only
+  // receive fiat. Their buyers can still pay crypto, which Paj routes to NGN.
+  const isEmailAccount = Boolean(user?.address?.startsWith('email:'))
   const [section, setSection] = useState<PaymentsSection>('request')
   const [amount, setAmount] = useState('')
   const token = 'USDC'
@@ -143,6 +146,10 @@ export default function Payments() {
   useEffect(() => {
     if (settlementTarget === 'fiat') setReceiveMode('public')
   }, [settlementTarget])
+
+  useEffect(() => {
+    if (isEmailAccount) setSettlementTarget('fiat')
+  }, [isEmailAccount])
 
   useEffect(() => {
     let active = true
@@ -254,7 +261,11 @@ export default function Payments() {
       return
     }
     if (!user?.address) {
-      setError('Sign in with the wallet that should receive this payment.')
+      setError('Sign in to create a payment request.')
+      return
+    }
+    if (settlementTarget === 'crypto' && isEmailAccount) {
+      setError('Email accounts cannot receive crypto. Link a bank account to settle in NGN.')
       return
     }
     if (settlementTarget === 'fiat' && !selectedBankAccount) {
@@ -281,7 +292,10 @@ export default function Payments() {
           merchantRef: `INV-${Date.now()}`,
           token,
           amount_ngn: amount,
-          recipientAddress: user.address,
+          recipientAddress:
+            settlementTarget === 'fiat'
+              ? selectedBankAccount?.solanaAddress ?? user.address
+              : user.address,
           receiveMode: settlementTarget === 'crypto' ? receiveMode : 'public',
           memo: memo.trim() || 'Payment request',
           includeFiatCheckout: includeBankTransfer,
@@ -718,26 +732,34 @@ export default function Payments() {
 
               <div className="border-t border-primary/10 pt-5">
                 <p className="text-sm font-medium">How you receive funds</p>
-                <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <button
-                    type="button"
-                    aria-pressed={settlementTarget === 'crypto'}
-                    onClick={() => setSettlementTarget('crypto')}
-                    className={`rounded-card border p-4 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
-                      settlementTarget === 'crypto'
-                        ? 'border-primary/35 bg-primary/5'
-                        : 'border-primary/10 bg-background hover:border-primary/25'
-                    }`}
-                  >
-                    <p className="flex items-center gap-2 text-sm font-semibold text-primary">
-                      <GlobeHemisphereWest size={17} /> Receive Crypto (USDC)
-                    </p>
-                    <p className="mt-1 text-xs leading-relaxed text-foreground/60">
-                      {user?.address
-                        ? `Crypto transfers land directly in your wallet (${truncateAddress(user.address)}).`
-                        : 'Crypto transfers settle directly into your connected Solana wallet.'}
-                    </p>
-                  </button>
+                {isEmailAccount && (
+                  <p className="mt-1 text-xs leading-relaxed text-foreground/55">
+                    Email accounts settle to your Nigerian bank account. Buyers can still pay with crypto; Paj Cash
+                    converts it to NGN for you.
+                  </p>
+                )}
+                <div className={`mt-3 grid gap-3 ${isEmailAccount ? '' : 'sm:grid-cols-2'}`}>
+                  {!isEmailAccount && (
+                    <button
+                      type="button"
+                      aria-pressed={settlementTarget === 'crypto'}
+                      onClick={() => setSettlementTarget('crypto')}
+                      className={`rounded-card border p-4 text-left transition focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ${
+                        settlementTarget === 'crypto'
+                          ? 'border-primary/35 bg-primary/5'
+                          : 'border-primary/10 bg-background hover:border-primary/25'
+                      }`}
+                    >
+                      <p className="flex items-center gap-2 text-sm font-semibold text-primary">
+                        <GlobeHemisphereWest size={17} /> Receive Crypto (USDC)
+                      </p>
+                      <p className="mt-1 text-xs leading-relaxed text-foreground/60">
+                        {user?.address
+                          ? `Crypto transfers land directly in your wallet (${truncateAddress(user.address)}).`
+                          : 'Crypto transfers settle directly into your connected Solana wallet.'}
+                      </p>
+                    </button>
+                  )}
                   <button
                     type="button"
                     aria-pressed={settlementTarget === 'fiat'}
