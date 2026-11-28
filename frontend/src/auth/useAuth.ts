@@ -1,5 +1,5 @@
 import { createContext, useContext } from 'react'
-import type { AuthStatus, AuthUser, LoginResponse, SignInStep } from './auth.types'
+import type { AuthStatus, AuthTab, AuthUser, LoginResponse, SignInStep } from './auth.types'
 
 export interface AuthContextValue {
   status: AuthStatus
@@ -7,11 +7,12 @@ export interface AuthContextValue {
   step: SignInStep
   error: string | null
   authModalOpen: boolean
+  authModalTab: AuthTab
   signIn: () => Promise<void>
   completeWhatsAppSignIn: (res: LoginResponse) => void
   signOut: () => void
   disconnectWallet: () => Promise<void>
-  openAuthModal: () => void
+  openAuthModal: (tab?: AuthTab) => void
   closeAuthModal: () => void
   clearError: () => void
 }

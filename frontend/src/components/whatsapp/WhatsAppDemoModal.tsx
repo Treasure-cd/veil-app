@@ -183,7 +183,7 @@ export function WhatsAppDemoModal({ open, onClose }: WhatsAppDemoModalProps) {
                 )}
               </div>
               {!walletLinked && (
-                <Button type="button" className="mt-3" fullWidth onClick={openAuthModal}>
+                <Button type="button" className="mt-3" fullWidth onClick={() => openAuthModal()}>
                   Connect wallet (optional)
                 </Button>
               )}
