@@ -19,7 +19,7 @@ export default function Landing() {
   const [demoIntroOpen, setDemoIntroOpen] = useState(false)
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
+    <div className="min-h-screen overflow-x-clip bg-background text-foreground">
       <Navbar />
       <DevnetNotice className="mt-16" />
       <main>

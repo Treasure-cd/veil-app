@@ -8,13 +8,14 @@ interface ConnectWalletButtonProps
 }
 
 // UI only. Pass `address` to show the connected state, `loading` while connecting.
-export function ConnectWalletButton({ address, loading, ...rest }: ConnectWalletButtonProps) {
+export function ConnectWalletButton({ address, loading, className = '', ...rest }: ConnectWalletButtonProps) {
   if (address) {
     return (
       <Button
         variant="secondary"
         title={address}
-        leftIcon={<Wallet size={18} weight="bold" />}
+        className={`max-sm:h-8 max-sm:px-2.5 max-sm:text-xs ${className}`}
+        leftIcon={<Wallet size={16} weight="bold" className="hidden sm:inline" />}
         {...rest}
       >
         <span className="font-mono">{truncateAddress(address)}</span>
@@ -23,7 +24,7 @@ export function ConnectWalletButton({ address, loading, ...rest }: ConnectWallet
   }
 
   return (
-    <Button loading={loading} leftIcon={<Wallet size={20} weight="bold" />} {...rest}>
+    <Button loading={loading} className={className} leftIcon={<Wallet size={20} weight="bold" />} {...rest}>
       {loading ? 'Connecting…' : 'Connect wallet'}
     </Button>
   )

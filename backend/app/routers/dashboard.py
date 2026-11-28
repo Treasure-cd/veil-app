@@ -122,6 +122,8 @@ def _resolve_settlement_status(
             return "settling"
         return "failed"
     if intent.status in ("funded", "claimed"):
+        if intent.paid_via == "crypto" and paj_order is None and fiat_payout is None:
+            return "settled"
         return "settling"
     if intent.status == "failed":
         return "expired" if intent.failure_reason == "expired" else "failed"

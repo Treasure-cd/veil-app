@@ -111,7 +111,7 @@ const STEPS = [
 export default function HowItWorks() {
   return (
     <section id="how" className="relative bg-surface/40 px-6 py-24 md:px-12 md:py-28">
-      <div className="mx-auto max-w-6xl">
+      <div className="mx-auto max-w-7xl">
         <div className="mx-auto mb-16 max-w-xl text-center">
           <motion.p
             initial={{ opacity: 0, y: 12 }}

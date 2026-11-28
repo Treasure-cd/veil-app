@@ -198,3 +198,30 @@ class PajOfframpOrder(SQLModel, table=True):
     )
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)
+
+
+class PaymentTraceEvent(SQLModel, table=True):
+    """Immutable audit trail for payment creation, rail updates, webhooks, and admin recovery."""
+
+    __tablename__ = "payment_trace_events"
+
+    id: UUID = Field(primary_key=True, default_factory=uuid4)
+    payment_intent_id: Optional[UUID] = Field(
+        default=None, foreign_key="payment_intents.id", index=True
+    )
+    fiat_payment_id: Optional[UUID] = Field(
+        default=None, foreign_key="fiat_payments.id", index=True
+    )
+    paj_order_id: Optional[UUID] = Field(
+        default=None, foreign_key="paj_offramp_orders.id", index=True
+    )
+    payroll_group_id: Optional[UUID] = Field(
+        default=None, foreign_key="payroll_groups.id", index=True
+    )
+    source: str = Field(..., index=True)
+    event_type: str = Field(..., index=True)
+    status: str = Field(default="info", index=True)
+    summary: str = Field(...)
+    details_json: Optional[str] = Field(default=None)
+    actor_address: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=utc_now, index=True)

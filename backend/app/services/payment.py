@@ -619,7 +619,16 @@ class FossaPayService:
             if payment.fossapay_id
             else f"/api/v1/payouts/reference/{payment.reference}"
         )
-        res = await self._request("GET", path)
+        try:
+            res = await self._request("GET", path)
+        except FossaPayError as exc:
+            if not payment.fossapay_id and exc.status_code == 404:
+                await self._mark_client_failure(
+                    db,
+                    payment,
+                    exc.message or "Payout not found on FossaPay",
+                )
+            raise
         _apply_payout_data(payment, res["data"])
         db.add(payment)
         await db.commit()

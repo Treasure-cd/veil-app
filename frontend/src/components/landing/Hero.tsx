@@ -117,7 +117,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
       <NoiseOverlay />
 
       {/* Hero content */}
-      <div className="relative z-20 flex w-full flex-wrap items-center justify-between gap-16 px-6 py-20 md:px-12 lg:px-20">
+      <div className="relative z-20 mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-12 px-6 py-20 md:gap-16 md:px-12">
 
         {/* Copy */}
         <div className="min-w-0 flex-1 basis-80">
@@ -206,7 +206,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
               stiffness: 200,
               damping: 14,
             }}
-            className="absolute -left-8 bottom-24 rounded-2xl border border-foreground/10 bg-surface/90 px-4 py-3 shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur dark:border-primary/20 dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
+            className="absolute left-1 bottom-20 rounded-2xl border border-foreground/10 bg-surface/90 px-4 py-3 shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur lg:-left-8 lg:bottom-24 dark:border-primary/20 dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
           >
             <p className="text-[10px] text-foreground/50">
               Instant Settlement
@@ -226,7 +226,7 @@ export default function Hero({ onShowDemo }: { onShowDemo: () => void }) {
               stiffness: 200,
               damping: 14,
             }}
-            className="absolute -right-6 top-20 flex items-center gap-2 rounded-full border border-primary/20 bg-surface/90 px-3.5 py-2 text-xs font-medium text-primary shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
+            className="absolute right-1 top-16 flex items-center gap-2 rounded-full border border-primary/20 bg-surface/90 px-3.5 py-2 text-xs font-medium text-primary shadow-[0_12px_40px_rgba(46,0,66,0.15)] backdrop-blur lg:-right-6 lg:top-20 dark:shadow-[0_12px_40px_rgba(0,0,0,0.5)]"
           >
             <LockKey weight="fill" size={14} />
             Data Shielded

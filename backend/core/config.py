@@ -93,7 +93,7 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("GEMINI_API_KEY", "GEMINI_APIKEY"),
     )
-    GEMINI_MODEL: str = Field(default="gemini-3.8-flash")
+    GEMINI_MODEL: str = Field(default="gemini-3.5-flash-lite")
 
     @field_validator("WHATSAPP_PAYMENT_METHODS", mode="before")
     @classmethod

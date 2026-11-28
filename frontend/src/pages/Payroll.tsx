@@ -335,7 +335,7 @@ export default function Payroll() {
   }
 
   return (
-      <div className="mx-auto max-w-6xl space-y-8 p-4 pb-12 sm:p-8">
+      <div className="w-full space-y-8">
 
         <header className="flex flex-col gap-1">
           <h1 className="text-3xl font-bold tracking-tight text-primary">Run Payroll</h1>

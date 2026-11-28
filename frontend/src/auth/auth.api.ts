@@ -1,6 +1,6 @@
 import bs58 from 'bs58'
 import { api } from '../services/api'
-import type { ChallengeResponse, LoginPayload, LoginResponse } from './auth.types'
+import type { AuthUser, ChallengeResponse, LoginPayload, LoginResponse } from './auth.types'
 
 export const requestChallenge = (address: string) =>
   api<ChallengeResponse>('/v1/auth/challenge', {
@@ -13,6 +13,20 @@ export const login = (payload: LoginPayload) =>
     method: 'POST',
     body: JSON.stringify(payload),
   })
+
+export const registerEmail = (email: string, password: string) =>
+  api<LoginResponse>('/v1/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+
+export const loginEmail = (email: string, password: string) =>
+  api<LoginResponse>('/v1/auth/login-email', {
+    method: 'POST',
+    body: JSON.stringify({ email, password }),
+  })
+
+export const fetchMe = () => api<AuthUser>('/v1/auth/me')
 
 export const buildLoginMessage = (nonce: string) =>
   `Sign this message to login to Veil: ${nonce}`

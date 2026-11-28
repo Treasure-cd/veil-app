@@ -23,7 +23,7 @@ export function AppLayout() {
         {isCheckout || isLanding ? (
           <Outlet />
         ) : (
-          <main className="mx-auto w-full max-w-6xl px-4 py-6 pb-24 md:px-8 md:py-8">
+          <main className="mx-auto w-full max-w-[1600px] px-4 py-6 pb-24 sm:px-6 md:px-8 md:py-8 md:pb-10 lg:px-10">
             {status === 'authenticated' && <Outlet />}
           </main>
         )}

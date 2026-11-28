@@ -19,12 +19,12 @@ export default function Navbar() {
   useMotionValueEvent(scrollY, 'change', (v) => setScrolled(v > 24))
 
   return (
-    <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-8">
+    <div className="pointer-events-none fixed inset-x-0 top-4 z-50 flex justify-center px-3 sm:px-6 md:px-8">
       <motion.nav
         initial={{ y: -80, opacity: 0 }}
         animate={{ y: 0, opacity: 1, maxWidth: scrolled ? 620 : 880 }}
         transition={{ type: 'spring', stiffness: 120, damping: 18 }}
-        className="pointer-events-auto flex w-full items-center justify-between rounded-full border border-foreground/10 bg-surface/75 py-2 pl-6 pr-4 shadow-[0_8px_32px_rgba(46,0,66,0.08)] backdrop-blur-xl dark:border-primary/15 dark:shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
+        className="pointer-events-auto flex w-full items-center justify-between gap-2 rounded-full border border-foreground/10 bg-surface/75 py-2 pl-4 pr-3 shadow-[0_8px_32px_rgba(46,0,66,0.08)] backdrop-blur-xl sm:pl-6 sm:pr-4 dark:border-primary/15 dark:shadow-[0_8px_32px_rgba(0,0,0,0.45)]"
       >
         <Link to="/" className="text-lg">
           <Logo className="h-5" />

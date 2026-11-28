@@ -4,6 +4,7 @@ import Dashboard from './pages/Dashboard'
 import Payments from './pages/Payments'
 import Payroll from './pages/Payroll'
 import Settings from './pages/Settings'
+import Admin from './pages/Admin'
 import Checkout from './pages/Checkout'
 import { AppProviders } from './providers/AppProvider'
 import { MotionConfig } from 'framer-motion'
@@ -19,6 +20,7 @@ function App() {
             <Route path="/app" element={<Dashboard />} />
             <Route path="/payments" element={<Payments />} />
             <Route path="/payroll" element={<Payroll />} />
+            <Route path="/admin" element={<Admin />} />
             <Route path="/settings" element={<Settings />} />
             <Route path="/pay/:id" element={<Checkout />} />
           </Route>

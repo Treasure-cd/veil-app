@@ -7,6 +7,7 @@ from .payment import (
     MerchantBankAccount,
     PajOfframpOrder,
     PaymentIntent,
+    PaymentTraceEvent,
 )
 from .payroll import PayrollGroup, PayrollLink
 from .whatsapp import WhatsAppLink, WhatsAppSession, WhatsAppMessage, WhatsAppLinkCode, WhatsAppSetupToken

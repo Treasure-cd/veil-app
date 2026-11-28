@@ -185,16 +185,33 @@ async def _build_inbound_reply(
                 session = None
 
         awaiting_amount = bool(session and session.state == "awaiting_amount")
-        if parsed["intent"] == "fallback":
+        needs_ai = parsed["intent"] == "fallback" or (
+            parsed["intent"] == "create_link"
+            and parsed["amount_ngn"] is None
+            and parsed["amount_error"] is None
+        )
+        if needs_ai:
             if awaiting_amount:
                 prefixed = parse_message(f"link {body}")
                 if prefixed["amount_ngn"] is not None or prefixed["amount_error"] is not None:
                     parsed = prefixed
-            if parsed["intent"] == "fallback":
-                parsed = await parse_message_with_gemini(
+            still_missing_amount = parsed["intent"] == "fallback" or (
+                parsed["intent"] == "create_link"
+                and parsed["amount_ngn"] is None
+                and parsed["amount_error"] is None
+            )
+            if still_missing_amount:
+                ai_parsed = await parse_message_with_gemini(
                     body,
                     awaiting_amount=awaiting_amount,
                 )
+                if ai_parsed["intent"] != "fallback" or parsed["intent"] == "fallback":
+                    parsed = {
+                        **ai_parsed,
+                        "receive_mode": ai_parsed["receive_mode"] or parsed["receive_mode"],
+                        "crypto_only": ai_parsed["crypto_only"] or parsed["crypto_only"],
+                        "memo": ai_parsed["memo"] or (None if parsed["intent"] == "fallback" else parsed["memo"]),
+                    }
 
         if parsed["intent"] == "menu":
             return MENU

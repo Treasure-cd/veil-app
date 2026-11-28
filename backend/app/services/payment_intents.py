@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.payment import PaymentIntent
 from app.services.rates import get_rates
+from app.services.trace import record_trace_event
 from core.config import settings
 
 
@@ -60,6 +61,25 @@ async def create_payment_intent(
         source=source,
     )
     db.add(intent)
+    await db.flush()
+    await record_trace_event(
+        db,
+        source="intent",
+        event_type="intent_created",
+        summary=f"Created {source} {token} request for ₦{amount_ngn} ({settlement_target}/{receive_mode})",
+        status="info",
+        payment_intent_id=intent.id,
+        details={
+            "merchantRef": merchant_ref,
+            "source": source,
+            "token": token,
+            "amountNgn": str(amount_ngn),
+            "amountAtomic": str(atomic),
+            "receiveMode": receive_mode,
+            "settlementTarget": settlement_target,
+            "allowFiatCheckout": allow_fiat_checkout,
+        },
+    )
     await db.commit()
     await db.refresh(intent)
     return intent

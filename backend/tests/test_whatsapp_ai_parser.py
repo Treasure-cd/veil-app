@@ -34,7 +34,7 @@ class WhatsAppAIParserTests(unittest.IsolatedAsyncioTestCase):
             GEMINI_APIKEY="alias-key-123",
         )
         self.assertEqual(cfg.GEMINI_API_KEY, "alias-key-123")
-        self.assertEqual(cfg.GEMINI_MODEL, "gemini-3.8-flash")
+        self.assertEqual(cfg.GEMINI_MODEL, "gemini-3.5-flash-lite")
 
     async def test_returns_fallback_without_calling_gemini_when_unconfigured(self) -> None:
         with (
@@ -81,7 +81,7 @@ class WhatsAppAIParserTests(unittest.IsolatedAsyncioTestCase):
 
         with (
             patch.object(settings, "GEMINI_API_KEY", "test-gemini-key"),
-            patch.object(settings, "GEMINI_MODEL", "gemini-3.8-flash"),
+            patch.object(settings, "GEMINI_MODEL", "gemini-3.5-flash"),
             patch("app.services.whatsapp_ai_parser.genai.Client", return_value=mock_client),
         ):
             ok = await parse_message_with_gemini("bill Chidi fifteen thousand for sneakers private crypto only")
@@ -114,6 +114,33 @@ class WhatsAppAIParserTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(result["intent"], "fallback")
         self.assertIsNone(result["amount_ngn"])
+
+    async def test_omits_thinking_config_for_flash_lite_3_5(self) -> None:
+        mock_generate = AsyncMock(
+            return_value=SimpleNamespace(
+                parsed=GeminiWhatsAppParse(
+                    intent="recent_payments",
+                    amount_ngn=None,
+                    memo=None,
+                    receive_mode=None,
+                    crypto_only=False,
+                ),
+                text=None,
+            )
+        )
+        mock_client = MagicMock()
+        mock_client.aio.models.generate_content = mock_generate
+
+        with (
+            patch.object(settings, "GEMINI_API_KEY", "test-gemini-lite-key"),
+            patch.object(settings, "GEMINI_MODEL", "gemini-3.5-flash-lite"),
+            patch("app.services.whatsapp_ai_parser.genai.Client", return_value=mock_client),
+        ):
+            result = await parse_message_with_gemini("who has paid me today")
+
+        self.assertEqual(result["intent"], "recent_payments")
+        cfg = mock_generate.await_args.kwargs["config"]
+        self.assertIsNone(cfg.thinking_config)
 
 
 if __name__ == "__main__":

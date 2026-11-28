@@ -210,13 +210,14 @@ function Settings() {
   }
 
   return (
-    <div className="mx-auto max-w-3xl space-y-6">
+    <div className="w-full space-y-6">
       <header>
         <h1 className="text-3xl font-semibold tracking-tight text-primary">Settings</h1>
         <p className="mt-1 text-sm text-foreground/60">Manage your account connections.</p>
       </header>
 
-      <section aria-labelledby="whatsapp-settings-title" className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
+      <div className="grid gap-6 xl:grid-cols-2 xl:items-start">
+        <section aria-labelledby="whatsapp-settings-title" className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div className="flex min-w-0 items-start gap-3">
             <span className="flex size-11 shrink-0 items-center justify-center rounded-card bg-primary/10 text-primary">
@@ -323,9 +324,10 @@ function Settings() {
         {linkError && !linkDialogOpen && (
           <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{linkError}</p>
         )}
-      </section>
+        </section>
 
-      <BankAccountSetupCard />
+        <BankAccountSetupCard />
+      </div>
 
       <dialog
         ref={dialogRef}
