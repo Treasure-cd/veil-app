@@ -186,11 +186,7 @@ async def handle_unexpected_error(request: Request, exc: Exception):
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        origin.strip()
-        for origin in settings.ALLOWED_ORIGINS.split(",")
-        if origin.strip()
-    ],
+    allow_origins=settings.allowed_origins_list,
     allow_origin_regex=r"https://veil-sol.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],

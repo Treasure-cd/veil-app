@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     RATE_NGN_PER_USDT: float | None = Field(default=None)
     
     ALLOWED_ORIGINS: str = Field(
-        default="http://localhost:5173,http://localhost:3000,https://www.yourveil.xyz,https://yourveil.xyz"
+        default="http://localhost:5173,http://localhost:3000,https://yourveil.vercel.app,https://www.yourveil.xyz,https://yourveil.xyz"
     )
     
     WASENDER_API_KEY: str | None = Field(default=None)
@@ -79,7 +79,7 @@ class Settings(BaseSettings):
     TWILIO_AUTH_TOKEN: str | None = Field(default=None)
     TWILIO_CONTENT_SID: str | None = Field(default=None)
     WEBHOOK_PUBLIC_URL: str | None = Field(default=None)
-    FRONTEND_URL: str = Field(default="https://yourveil.vercel.app")
+    FRONTEND_URL: str = Field(default="https://yourveil.xyz")
     TWILIO_WHATSAPP_FROM: str | None = Field(default=None)
     TWILIO_SANDBOX_JOIN_CODE: str | None = Field(default=None)
     WHATSAPP_DEMO_MODE: str = Field(default="false")
@@ -133,11 +133,11 @@ class Settings(BaseSettings):
 
     @property
     def allowed_origins_list(self) -> List[str]:
-        return [
-            origin.strip()
-            for origin in self.ALLOWED_ORIGINS.split(",")
-            if origin.strip()
-        ]
+        origins = [origin.strip() for origin in self.ALLOWED_ORIGINS.split(",") if origin.strip()]
+        for origin in ("https://yourveil.vercel.app", "https://www.yourveil.xyz", "https://yourveil.xyz"):
+            if origin not in origins:
+                origins.append(origin)
+        return origins
 
 
 settings = Settings()
