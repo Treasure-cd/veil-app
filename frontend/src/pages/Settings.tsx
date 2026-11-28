@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useSearchParams } from 'react-router'
 import { CheckCircle, Clock, Copy, WhatsappLogo, X } from '@phosphor-icons/react'
 import { api } from '../services/api'
+import { useAuth } from '../auth/useAuth'
 import { Button } from '../components/ui/Button'
 import { BankAccountSetupCard } from '../components/payments/BankAccountSetupCard'
 
@@ -38,6 +39,10 @@ function formatCountdown(seconds: number) {
 }
 
 function Settings() {
+  const { user } = useAuth()
+  const isWhatsAppOnlyAccount = Boolean(
+    user?.hasWallet === false || user?.address?.startsWith('whatsapp:'),
+  )
   const dialogRef = useRef<HTMLDialogElement>(null)
   const [searchParams, setSearchParams] = useSearchParams()
   const setupToken = searchParams.get('whatsapp_setup')?.trim() || null
@@ -236,9 +241,15 @@ function Settings() {
           </div>
           <div className="flex w-full flex-wrap gap-2 sm:w-auto">
             {status?.linked ? (
-              <Button variant="secondary" size="sm" loading={unlinking} onClick={() => void unlinkWhatsApp()}>
-                Unlink
-              </Button>
+              isWhatsAppOnlyAccount ? (
+                <span className="inline-flex items-center rounded-pill bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
+                  Sign-in identity
+                </span>
+              ) : (
+                <Button variant="secondary" size="sm" loading={unlinking} onClick={() => void unlinkWhatsApp()}>
+                  Unlink
+                </Button>
+              )
             ) : (
               <Button size="sm" loading={linkLoading} disabled={statusLoading} onClick={() => void issueLinkCode()}>
                 Connect WhatsApp

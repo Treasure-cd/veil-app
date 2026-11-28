@@ -104,9 +104,11 @@ const PAJ_MIN_USDC = 0.4
 export default function Payments() {
   const { user } = useAuth()
   const wallet = useWallet()
-  // Traditional (email) accounts have no Solana wallet, so they can only
+  // Standalone WhatsApp accounts have no Solana wallet, so they can only
   // receive fiat. Their buyers can still pay crypto, which Paj routes to NGN.
-  const isEmailAccount = Boolean(user?.address?.startsWith('email:'))
+  const isWhatsAppAccount = Boolean(
+    user?.hasWallet === false || user?.address?.startsWith('whatsapp:'),
+  )
   const [section, setSection] = useState<PaymentsSection>('request')
   const [amount, setAmount] = useState('')
   const token = 'USDC'
@@ -148,8 +150,8 @@ export default function Payments() {
   }, [settlementTarget])
 
   useEffect(() => {
-    if (isEmailAccount) setSettlementTarget('fiat')
-  }, [isEmailAccount])
+    if (isWhatsAppAccount) setSettlementTarget('fiat')
+  }, [isWhatsAppAccount])
 
   useEffect(() => {
     let active = true
@@ -264,8 +266,8 @@ export default function Payments() {
       setError('Sign in to create a payment request.')
       return
     }
-    if (settlementTarget === 'crypto' && isEmailAccount) {
-      setError('Email accounts cannot receive crypto. Link a bank account to settle in NGN.')
+    if (settlementTarget === 'crypto' && isWhatsAppAccount) {
+      setError('WhatsApp-only accounts cannot receive crypto directly. Link a Nigerian bank account to settle in NGN.')
       return
     }
     if (settlementTarget === 'fiat' && !selectedBankAccount) {
@@ -732,14 +734,14 @@ export default function Payments() {
 
               <div className="border-t border-primary/10 pt-5">
                 <p className="text-sm font-medium">How you receive funds</p>
-                {isEmailAccount && (
+                {isWhatsAppAccount && (
                   <p className="mt-1 text-xs leading-relaxed text-foreground/55">
-                    Email accounts settle to your Nigerian bank account. Buyers can still pay with crypto; Paj Cash
+                    WhatsApp accounts settle to your Nigerian bank account. Buyers can still pay with crypto; Paj Cash
                     converts it to NGN for you.
                   </p>
                 )}
-                <div className={`mt-3 grid gap-3 ${isEmailAccount ? '' : 'sm:grid-cols-2'}`}>
-                  {!isEmailAccount && (
+                <div className={`mt-3 grid gap-3 ${isWhatsAppAccount ? '' : 'sm:grid-cols-2'}`}>
+                  {!isWhatsAppAccount && (
                     <button
                       type="button"
                       aria-pressed={settlementTarget === 'crypto'}

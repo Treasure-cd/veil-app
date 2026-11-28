@@ -69,7 +69,7 @@ class CreatePaymentIntentRequest(BaseModel):
     def validate_recipient(self):
         # Fiat-settled intents are routed to the linked bank account's Paj
         # deposit address, so the merchant does not need a crypto wallet and
-        # recipientAddress may be a non-Solana placeholder (e.g. email accounts).
+        # recipientAddress may be a non-Solana placeholder (e.g. WhatsApp-only accounts).
         if self.settlementTarget == SettlementTarget.CRYPTO.value:
             try:
                 Pubkey.from_string(self.recipientAddress)
