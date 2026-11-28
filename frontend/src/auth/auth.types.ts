@@ -16,6 +16,8 @@ export interface Session {
 
 export type AuthStatus = 'guest' | 'authenticated'
 
+export type AuthTab = 'wallet' | 'whatsapp'
+
 export type SignInStep =
   | 'idle'
   | 'requesting-challenge'

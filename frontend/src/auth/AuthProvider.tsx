@@ -11,7 +11,7 @@ import { useWallet } from '@solana/wallet-adapter-react'
 import { configureApi, ApiError } from '../services/api'
 import { buildLoginMessage, encodeSignature, fetchMe, login, requestChallenge } from './auth.api'
 import { clearSession, getTokenExpiry, loadSession, saveSession } from './auth.storage'
-import type { LoginResponse, Session, SignInStep } from './auth.types'
+import type { AuthTab, LoginResponse, Session, SignInStep } from './auth.types'
 import { AuthContext, type AuthContextValue } from './useAuth.ts'
 
 const MAX_TIMEOUT = 2 ** 31 - 1
@@ -42,6 +42,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [step, setStep] = useState<SignInStep>('idle')
   const [error, setError] = useState<string | null>(null)
   const [authModalOpen, setAuthModalOpen] = useState(false)
+  const [authModalTab, setAuthModalTab] = useState<AuthTab>('wallet')
   const sessionRef = useRef<Session | null>(session)
   const lastConnectedAddressRef = useRef<string | null>(publicKey?.toBase58() ?? null)
 
@@ -173,7 +174,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setError('Veil signed out, but your wallet could not be disconnected. Try again in your wallet.')
     }
   }, [applySession, disconnect])
-  const openAuthModal = useCallback(() => setAuthModalOpen(true), [])
+  const openAuthModal = useCallback((tab: AuthTab = 'wallet') => {
+    setAuthModalTab(tab)
+    setAuthModalOpen(true)
+  }, [])
   const closeAuthModal = useCallback(() => setAuthModalOpen(false), [])
   const clearError = useCallback(() => setError(null), [])
 
@@ -184,6 +188,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       step,
       error,
       authModalOpen,
+      authModalTab,
       signIn,
       completeWhatsAppSignIn,
       signOut,
@@ -192,7 +197,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       closeAuthModal,
       clearError,
     }),
-    [session, step, error, authModalOpen, signIn, completeWhatsAppSignIn, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
+    [session, step, error, authModalOpen, authModalTab, signIn, completeWhatsAppSignIn, signOut, disconnectWallet, openAuthModal, closeAuthModal, clearError],
   )
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>

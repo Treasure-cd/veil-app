@@ -4,14 +4,12 @@ import { WalletReadyState } from '@solana/wallet-adapter-base'
 import { CheckCircle, Clock, Copy, Wallet, WhatsappLogo } from '@phosphor-icons/react'
 import { useAuth } from '../../auth/useAuth'
 import { pollWhatsAppAuth, startWhatsAppAuth } from '../../auth/auth.api'
-import type { SignInStep, WhatsAppAuthChallengeResponse } from '../../auth/auth.types'
+import type { AuthTab, SignInStep, WhatsAppAuthChallengeResponse } from '../../auth/auth.types'
 import { truncateAddress } from '../../lib/format'
 import { Button } from '../../components/ui/Button'
 import { ConnectWalletButton } from '../../auth/ConnectWalletButton'
 import { NETWORK_LABEL, NETWORK } from '../../lib/network'
 import { ApiError } from '../../services/api'
-
-type AuthTab = 'wallet' | 'whatsapp'
 
 interface AuthModalProps {
   open: boolean
@@ -40,9 +38,9 @@ export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps
   const dialogRef = useRef<HTMLDialogElement>(null)
   const { wallets, wallet, select, connect, disconnect, connecting, connected, publicKey } =
     useWallet()
-  const { signIn, completeWhatsAppSignIn, step, error, clearError } = useAuth()
+  const { signIn, completeWhatsAppSignIn, step, error, clearError, authModalTab } = useAuth()
 
-  const [tab, setTab] = useState<AuthTab>('wallet')
+  const [tab, setTab] = useState<AuthTab>(authModalTab)
   const [pendingConnect, setPendingConnect] = useState(false)
   const [connectError, setConnectError] = useState<string | null>(null)
 
@@ -60,6 +58,11 @@ export function AuthModal({ open, dismissible = false, onClose }: AuthModalProps
     if (open && !dialog.open) dialog.showModal()
     if (!open && dialog.open) dialog.close()
   }, [open])
+
+  // Honour the caller's requested tab (e.g. landing "Link WhatsApp" opens WhatsApp).
+  useEffect(() => {
+    if (open) setTab(authModalTab)
+  }, [open, authModalTab])
 
   // Reset transient challenge state when modal closes.
   useEffect(() => {
