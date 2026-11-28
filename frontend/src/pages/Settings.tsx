@@ -32,6 +32,11 @@ interface CompleteSetupResponse {
   notified_whatsapp: boolean
 }
 
+interface SettlementSettings {
+  default_target: 'crypto' | 'fiat'
+  is_explicit: boolean
+}
+
 function formatCountdown(seconds: number) {
   const minutes = Math.floor(seconds / 60).toString().padStart(2, '0')
   const remainder = (seconds % 60).toString().padStart(2, '0')
@@ -58,6 +63,10 @@ function Settings() {
   const [linkError, setLinkError] = useState<string | null>(null)
   const [copiedCommand, setCopiedCommand] = useState(false)
   const [now, setNow] = useState(Date.now())
+  const [settlement, setSettlement] = useState<SettlementSettings | null>(null)
+  const [settlementLoading, setSettlementLoading] = useState(true)
+  const [settlementSaving, setSettlementSaving] = useState(false)
+  const [settlementError, setSettlementError] = useState<string | null>(null)
 
   const [setupLoading, setSetupLoading] = useState(false)
   const [setupPreview, setSetupPreview] = useState<SetupPreviewResponse | null>(null)
@@ -91,6 +100,13 @@ function Settings() {
   useEffect(() => {
     void refreshStatus()
   }, [refreshStatus])
+
+  useEffect(() => {
+    api<SettlementSettings>('/v1/settings/settlement')
+      .then(setSettlement)
+      .catch((error) => setSettlementError(error instanceof Error ? error.message : 'Could not load settlement settings.'))
+      .finally(() => setSettlementLoading(false))
+  }, [])
 
   useEffect(() => {
     if (!setupToken) {
@@ -211,6 +227,22 @@ function Settings() {
       setLinkError(error instanceof Error ? error.message : 'Could not unlink WhatsApp.')
     } finally {
       setUnlinking(false)
+    }
+  }
+
+  async function saveSettlementTarget(defaultTarget: 'crypto' | 'fiat') {
+    setSettlementSaving(true)
+    setSettlementError(null)
+    try {
+      const next = await api<SettlementSettings>('/v1/settings/settlement', {
+        method: 'PATCH',
+        body: JSON.stringify({ default_target: defaultTarget }),
+      })
+      setSettlement(next)
+    } catch (error) {
+      setSettlementError(error instanceof Error ? error.message : 'Could not save settlement settings.')
+    } finally {
+      setSettlementSaving(false)
     }
   }
 
@@ -337,8 +369,47 @@ function Settings() {
         )}
         </section>
 
-        <BankAccountSetupCard />
+        <div id="fiat-account-settings">
+          <BankAccountSetupCard />
+        </div>
       </div>
+
+      <section aria-labelledby="settlement-settings-title" className="rounded-panel border border-primary/10 bg-surface p-5 sm:p-6">
+        <div>
+          <h2 id="settlement-settings-title" className="font-semibold text-primary">Default settlement</h2>
+          <p className="mt-1 max-w-2xl text-sm text-foreground/60">
+            Choose where new WhatsApp payment links should settle. This applies to future links only.
+          </p>
+        </div>
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          {([
+            { value: 'crypto' as const, title: 'Crypto wallet', description: 'Keep crypto payments in your wallet.' },
+            { value: 'fiat' as const, title: 'Nigerian bank account', description: 'Convert supported crypto payments to NGN.' },
+          ]).map((option) => (
+            <label
+              key={option.value}
+              className={`cursor-pointer rounded-card border p-4 transition-colors ${
+                settlement?.default_target === option.value
+                  ? 'border-primary-action bg-primary/5'
+                  : 'border-primary/10 hover:border-primary/30'
+              }`}
+            >
+              <input
+                type="radio"
+                name="default-settlement"
+                value={option.value}
+                checked={settlement?.default_target === option.value}
+                disabled={settlementLoading || settlementSaving}
+                onChange={() => void saveSettlementTarget(option.value)}
+                className="sr-only"
+              />
+              <p className="text-sm font-semibold text-primary">{option.title}</p>
+              <p className="mt-1 text-xs text-foreground/60">{option.description}</p>
+            </label>
+          ))}
+        </div>
+        {settlementError && <p role="alert" className="mt-3 text-sm text-red-700 dark:text-red-300">{settlementError}</p>}
+      </section>
 
       <dialog
         ref={dialogRef}

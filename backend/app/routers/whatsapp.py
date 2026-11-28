@@ -14,7 +14,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlmodel import select
 
-from app.models.payment import MerchantBankAccount, PaymentIntent
+from app.models.payment import MerchantBankAccount, PaymentIntent, SettlementTarget
 from app.models.user import User
 from app.models.whatsapp import WhatsAppLink, WhatsAppMessage, WhatsAppSession
 from app.services.payment_intents import create_payment_intent
@@ -26,6 +26,7 @@ from app.services.whatsapp_linking import (
     mask_phone,
     verify_whatsapp_auth_challenge,
 )
+from app.routers.settings import effective_settlement_target
 from app.services.whatsapp_parser import parse_message
 from core.config import settings
 from core.session import get_session
@@ -270,7 +271,13 @@ async def _build_inbound_reply(
             return "The maximum request is ₦10,000,000. Please send a lower amount."
 
         is_non_wallet_user = user.address.startswith("whatsapp:")
-        if is_non_wallet_user:
+        settlement_target = (
+            SettlementTarget.CRYPTO.value
+            if parsed["crypto_only"]
+            else effective_settlement_target(user)
+        )
+        bank_account = None
+        if settlement_target == "fiat":
             bank_account = (await db.execute(
                 select(MerchantBankAccount)
                 .where(MerchantBankAccount.user_id == user.id)
@@ -278,9 +285,9 @@ async def _build_inbound_reply(
                 .limit(1)
             )).scalars().first()
             if not bank_account:
-                setup_bank_url = f"{settings.FRONTEND_URL.rstrip('/')}/payments"
+                setup_bank_url = f"{settings.FRONTEND_URL.rstrip('/')}/settings#fiat-account-settings"
                 return (
-                    "Link a Nigerian bank account in Veil first so your payments settle to NGN:\n"
+                    "Add a Nigerian bank account in Veil Settings first so your payments settle directly to NGN:\n"
                     f"{setup_bank_url}"
                 )
             receive_mode = "public"
@@ -291,20 +298,6 @@ async def _build_inbound_reply(
                 "fossapay" in settings.whatsapp_payment_methods
                 and not parsed["crypto_only"]
             )
-            intent = await create_payment_intent(
-                db=db,
-                user_id=user.id,
-                recipient_address=recipient_address,
-                amount_ngn=parsed["amount_ngn"],
-                merchant_ref=(parsed["memo"] or "WhatsApp payment")[:120],
-                token="USDC",
-                memo=parsed["memo"],
-                source="whatsapp",
-                receive_mode=receive_mode,
-                allow_fiat_checkout=allow_fiat_checkout,
-                settlement_target=settlement_target,
-                bank_account_id=bank_account_id,
-            )
         else:
             receive_mode = parsed["receive_mode"] or (
                 "private" if settings.WHATSAPP_PRIVATE_PAYMENTS else "public"
@@ -314,18 +307,23 @@ async def _build_inbound_reply(
                 and not parsed["crypto_only"]
                 and receive_mode != "private"
             )
-            intent = await create_payment_intent(
-                db=db,
-                user_id=user.id,
-                recipient_address=user.address,
-                amount_ngn=parsed["amount_ngn"],
-                merchant_ref=(parsed["memo"] or "WhatsApp payment")[:120],
-                token="USDC",
-                memo=parsed["memo"],
-                source="whatsapp",
-                receive_mode=receive_mode,
-                allow_fiat_checkout=allow_fiat_checkout,
-            )
+            recipient_address = user.address
+            bank_account_id = None
+
+        intent = await create_payment_intent(
+            db=db,
+            user_id=user.id,
+            recipient_address=recipient_address,
+            amount_ngn=parsed["amount_ngn"],
+            merchant_ref=(parsed["memo"] or "WhatsApp payment")[:120],
+            token="USDC",
+            memo=parsed["memo"],
+            source="whatsapp",
+            receive_mode=receive_mode,
+            allow_fiat_checkout=allow_fiat_checkout,
+            settlement_target=settlement_target,
+            bank_account_id=bank_account_id,
+        )
         if session:
             await db.delete(session)
             await db.commit()

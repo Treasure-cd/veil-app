@@ -29,6 +29,8 @@ class User(SQLModel, table=True):
         default=False
     )
 
+    default_settlement_target: Optional[str] = Field(default=None)
+
     created_at: datetime = Field(
         default_factory=utc_now
     )
