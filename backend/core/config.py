@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     RATE_NGN_PER_USDT: float | None = Field(default=None)
     
     ALLOWED_ORIGINS: str = Field(
-        default="http://localhost:5173,http://localhost:3000,https://yourveil.xyz"
+        default="http://localhost:5173,http://localhost:3000,https://www.yourveil.xyz,https://yourveil.xyz"
     )
     
     WASENDER_API_KEY: str | None = Field(default=None)
