@@ -31,7 +31,9 @@ export default defineConfig(({ command, mode }) => {
     (network === 'devnet'
       ? '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
       : 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v')
-  const usdtMint = readVar('SOLANA_USDT_MINT', 'VITE_SOLANA_USDT_MINT')?.trim() || ''
+  const usdtMint =
+    readVar('SOLANA_USDT_MINT', 'VITE_SOLANA_USDT_MINT')?.trim() ||
+    (network === 'mainnet-beta' ? 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB' : '')
   const apiUrl = readVar('API_URL', 'VITE_API_URL')?.trim() ?? ''
 
   if (command === 'build' && mode === 'production') {

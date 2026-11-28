@@ -12,8 +12,9 @@ export const IS_DEVNET = NETWORK === 'devnet'
 
 export const SOL_MINT = 'So11111111111111111111111111111111111111112'
 export const MAINNET_USDC_MINT = 'EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v'
+export const MAINNET_USDT_MINT = 'Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB'
 export const DEVNET_USDC_MINT = '4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU'
-export const USDT_MINT = process.env.SOLANA_USDT_MINT || ''
+export const USDT_MINT = process.env.SOLANA_USDT_MINT || (IS_MAINNET ? MAINNET_USDT_MINT : '')
 
 const USDC_MINTS: Record<Network, string> = {
   devnet: DEVNET_USDC_MINT,

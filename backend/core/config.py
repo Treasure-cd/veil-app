@@ -9,6 +9,7 @@ dotenv.load_dotenv()
 MAINNET_RPC_URL = "https://api.mainnet-beta.solana.com"
 DEVNET_RPC_URL = "https://api.devnet.solana.com"
 MAINNET_USDC_MINT = "EPjFWdd5AufqSSqeM2qN1xzybapC8G4wEGGkZwyTDt1v"
+MAINNET_USDT_MINT = "Es9vMFrzaCERmJfrF4H2FYD4KCoNkY11McCe8BenwNYB"
 DEVNET_USDC_MINT = "4zMMC9srt5Ri5X14GAgXhaHii3GnPAEERYPJgZJDncDU"
 NATIVE_SOL_MINT = "So11111111111111111111111111111111111111112"
 
@@ -40,6 +41,8 @@ class Settings(BaseSettings):
                 self.SOLANA_RPC_URL = MAINNET_RPC_URL
             if not (self.USDC_MINT or "").strip():
                 self.USDC_MINT = MAINNET_USDC_MINT
+            if not (self.USDT_MINT or "").strip():
+                self.USDT_MINT = MAINNET_USDT_MINT
         elif raw == "devnet":
             self.SOLANA_NETWORK = "devnet"
             if not (self.SOLANA_RPC_URL or "").strip():
